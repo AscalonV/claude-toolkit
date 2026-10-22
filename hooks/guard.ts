@@ -1,7 +1,8 @@
 // Usage guard: two stages per limit window (wrap-up, stop), each sent once per window, session
 // and loop (main or one agent) as a user-role note the model reads on its next request. The main
 // chat gets its notes (and its draft handoff) once it has started a turn, so a session opened and
-// closed unused leaves no file. What was sent and the task's handoff are kept in $.state.
+// closed unused leaves no file. What was sent and the task's handoff are kept in $.state; a /clear
+// or a resume forgets the task's handoff and the draft, which belong to the conversation before.
 import type { EngineInterface } from 'claude-code'
 
 import type { ToolkitGuard } from '../types'
@@ -31,7 +32,8 @@ export const taskHandoffPath = () => taskHandoff
 export const mainTurnStarted = () => (mainTurn = true)
 
 async function save($: EngineInterface) {
-  const value: ToolkitGuard = { warned: [...warned], ...(taskHandoff ? { taskHandoff } : {}) }
+  const sessionId = await $.session.id().catch(() => undefined)
+  const value: ToolkitGuard = { ...(sessionId ? { sessionId } : {}), warned: [...warned], ...(taskHandoff ? { taskHandoff } : {}) }
   await $.state.set(STATE, value).catch(() => {})
 }
 
@@ -40,12 +42,19 @@ export async function setTaskHandoff($: EngineInterface, path: string) {
   await save($)
 }
 
-// After a hot reload: the notes already sent and the task's handoff.
+// After a hot reload: the notes already sent and, if it is this session's, the task's handoff.
 export async function restoreGuard($: EngineInterface) {
   const { value } = await $.state.get(STATE).catch(() => ({ value: undefined }))
   if (!value) return
-  for (const key of value.warned) warned.add(key)
-  taskHandoff ??= value.taskHandoff
+  for (const key of value.warned) warned.add(key) // keyed by session: another session's never match
+  if (!value.sessionId || value.sessionId === (await $.session.id())) taskHandoff ??= value.taskHandoff
+}
+
+// A /clear or a resume: another conversation, whose notes start with its first turn.
+export function resetGuard() {
+  taskHandoff = undefined
+  handoff = undefined
+  mainTurn = false
 }
 
 function resets(iso: string | undefined) {

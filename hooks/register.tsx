@@ -22,15 +22,18 @@ import {
   currentBudget,
   rules as budgetRules,
   duringCompaction,
+  resetBudget,
   restoreBudget,
   setBudget,
   setFromTool,
+  setInteractive,
   toolSpec,
+  turnEnded,
   turnStarted,
 } from './context'
 import { defaultLevel, effortRules } from './effort'
 import { configDir, homeDir } from './paths'
-import { afterCompact, atStop, check, checkAll, mainTurnStarted, restoreGuard, setConfig, setUsage } from './guard'
+import { afterCompact, atStop, check, checkAll, mainTurnStarted, resetGuard, restoreGuard, setConfig, setUsage } from './guard'
 import type { Window } from './guard'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -169,6 +172,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     // A hot reload starts the module over: what Claude set and the guard sent are in $.state.
+    setInteractive(e.isInteractive)
     await restoreGuard($)
     await restoreBudget($)
     await load($)
@@ -202,6 +206,7 @@ export const register: Register = (on, options) => {
       await draw($)
     }
     await check($, e.agentId) // an agent started after a warning gets its own note here
+    if (!e.agentId) await beforeRequest($) // past 90 % of the budget, Claude must decide, also mid-turn
     return yield* next(e)
   })
 
@@ -210,7 +215,7 @@ export const register: Register = (on, options) => {
     await takeReading($, e.rateLimits, e.changed.includes('rateLimits'))
     await draw($)
     await checkAll($)
-    await beforeRequest($) // the context changed: past 90 % of the budget, Claude must decide
+    await beforeRequest($) // the context changed (after a turn)
     return next(e)
   })
 
@@ -224,8 +229,19 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
+    if (!e.agentId) turnEnded()
     if (!e.agentId && !e.isAborted) await afterTurn($, !atStop())
     return result
+  })
+
+  // A /clear or a resume goes on in this process under another session id, with no session.start:
+  // the budget, a request and the task's handoff belonged to the conversation before.
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      resetBudget()
+      resetGuard()
+    }
+    return next(e)
   })
 
   // A new subagent gets the project's agent rules at the end of its prompt.

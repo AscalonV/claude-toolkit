@@ -164,14 +164,15 @@ Every request sends the whole conversation, so a long chat costs more with every
 
 - At the start of every task, also a new task in the same chat, Claude sets the budget with the plugin's `ContextBudget` tool and names it in its effort line, e.g. `Effort: high (new feature) · Context: 300k`. Ask for another size any time.
 - Above `contextCap` (800k) only when you ask; never above the model's window.
-- **At 90 % of the budget it's decision time**, checked each time the context grows, so Claude hears it mid-turn:
+- **At 90 % of the budget it's decision time**, checked before every request of the main chat, so Claude hears it mid-turn:
   - the task needs the context: Claude raises the budget and carries on, or
   - otherwise Claude finishes the current step, fills in the handoff, asks for a compaction (`compact: true`) and ends its turn. With `carryOn: true` (the task isn't finished and needs nothing from you) the plugin starts the next turn by itself after compacting, from the handoff; without it, it waits for you.
 - A new budget gets its own 90 % note, also when the context is already past 90 % of it.
-- Past the whole budget with no decision, the plugin compacts at the end of the turn and waits for you.
+- **The plugin never compacts on its own**, so nothing is summarized before Claude has saved what matters. Past the budget Claude is reminded again, at 100 % and every further 10 %. If it still doesn't decide, Claude Code's own compaction near the model's window is the safety net.
 - At the usage guard's stop stage, nothing resumes by itself.
 - **Your messages come first.** A queued message that starts a turn before the compaction runs moves it to the end of that turn, and Claude is told: it answers you, and asks again with `carryOn` if the task should still resume afterwards (otherwise the plugin waits for you). A message you type while the compaction runs goes before the plugin's "continue" prompt, which is then not sent; Claude reads beside your message that the task was meant to resume, and carries on unless your message changes it.
-- The budget Claude set, a compaction it asked for and the task's handoff file survive a plugin reload or update (`$.state`); a new process (`claude --resume`) starts from the default again.
+- Headless sessions (`claude -p`, SDK hosts such as the IDE extensions) compact through the `/compact` command, since the plugin API's own compaction isn't available there yet. A compaction refused for any other reason is reported to Claude once, with the reason.
+- The budget Claude set, a compaction it asked for and the task's handoff file survive a plugin reload or update (`$.state`). `/clear` and `/resume` start them over, and so does a new process (`claude --resume`). A budget Claude never set follows the `contextBudget` setting, also after you change it.
 - The status line shows `ctx 95k/300k`. The rules in Claude's instructions name the default from the settings, so they read the same whatever budget is set.
 - A turn runs from your message until Claude's reply ends; the plugin compacts between turns, so Claude Code's own compaction stays as the safety net for one extremely long turn. Don't set `autoCompactWindow` below the cap: Claude Code would compact there before a larger budget is reached.
 
