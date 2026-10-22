@@ -1,10 +1,11 @@
 # toolkit
 
-A Claude Code plugin with three parts:
+A Claude Code plugin with four parts:
 
 - a **status line** that shows who is signed in and how much usage is left,
 - a **usage guard** that warns Claude before a limit is hit and starts a handoff file,
-- **effort skills** so Claude picks its thinking effort per turn.
+- **effort skills** so Claude picks its thinking effort per turn,
+- **agents**: a project's own rules for its subagents, and an optional rule to start agents without being asked.
 
 ## Status line
 
@@ -89,6 +90,8 @@ It never overwrites an existing file. It fills in what it knows and leaves the r
 | `guard` | `true` | Turns the guard on or off |
 | `agentNotes` | `true` | Sends subagents their own notes |
 | `handoffFile` | `true` | Creates the handoff file |
+| `agentRules` | `true` | Adds the project's `.claude/agent-rules.md` to every new subagent's prompt |
+| `agentUse` | `false` | Tells Claude to start subagents on its own when parallel work makes sense |
 | `handoffFolder` | `handoffs` | Handoff folder in a project, relative to the project root, or absolute |
 | `outsideProjectFolder` | `handoffs` | Handoff folder outside a project, relative to the Claude config folder, or absolute |
 | `fiveHourWrapUp` / `fiveHourStop` | `85` / `90` | 5-hour thresholds in % |
@@ -122,6 +125,24 @@ The plugin ships four skills, `toolkit:effort-low`, `-medium`, `-high` and `-xhi
 A project can bring its own, more tailored effort skills: an `effort-<level>` skill in `.claude/skills/` of the working directory or the project root. The rules then name the project's skill for that level instead of `toolkit:effort-<level>`, and tell Claude to use it. Levels the project doesn't cover keep the plugin's skill.
 
 Turn the rules off with the `effortRules` setting; the skills stay available either way.
+
+## Agents
+
+### Project rules for subagents
+
+A project can give its subagents rules of their own: which files they may touch, where they keep notes, how they report back. Put them in `.claude/agent-rules.md`, in the project root or the working directory. The plugin adds the file's text to the end of every new subagent's prompt, so the agent has the rules before its first request. Resumed agents already have them. Projects without the file see no change.
+
+Turn it off with the `agentRules` setting.
+
+### Starting agents on its own
+
+By default, Claude Code starts subagents only when you ask for them. With `agentUse` on, the plugin adds a rule to the main chat's instructions: start agents without being asked whenever work splits into parallel, independent parts, keep small or tightly coupled work in the main chat, give each agent its own files and a self-contained prompt, and skip agents for quick one-off tasks. Subagents themselves don't get this rule.
+
+It is off by default, because every agent starts with an empty context and costs tokens. Turn it on per machine:
+
+```
+echo '{"agentUse":"true"}' | claude plugin configure toolkit@ascalonv --values-stdin
+```
 
 ## Install
 

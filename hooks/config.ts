@@ -8,6 +8,8 @@ export type Config = {
   guard: boolean
   agentNotes: boolean
   handoffFile: boolean
+  agentRules: boolean
+  agentUse: boolean
   handoffFolder: string
   outsideProjectFolder: string
   extraNote: string
@@ -19,6 +21,8 @@ export const DEFAULTS: Config = {
   guard: true,
   agentNotes: true,
   handoffFile: true,
+  agentRules: true,
+  agentUse: false,
   handoffFolder: 'handoffs',
   outsideProjectFolder: 'handoffs',
   extraNote: '',
@@ -68,6 +72,8 @@ export function readConfig(options: PluginOptions): { config: Config; bad: strin
       guard: flag(options.guard, DEFAULTS.guard, 'guard', bad),
       agentNotes: flag(options.agentNotes, DEFAULTS.agentNotes, 'agentNotes', bad),
       handoffFile: flag(options.handoffFile, DEFAULTS.handoffFile, 'handoffFile', bad),
+      agentRules: flag(options.agentRules, DEFAULTS.agentRules, 'agentRules', bad),
+      agentUse: flag(options.agentUse, DEFAULTS.agentUse, 'agentUse', bad),
       handoffFolder: folder('handoffFolder'),
       outsideProjectFolder: folder('outsideProjectFolder'),
       extraNote: typeof extra === 'string' ? extra.trim() : DEFAULTS.extraNote,

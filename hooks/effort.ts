@@ -17,7 +17,7 @@ async function skillName($: EngineInterface, level: string, dirs: string[]) {
   return `${$.plugin.name}:effort-${level}`
 }
 
-export async function effortRules($: EngineInterface) {
+export async function effortRules($: EngineInterface, agentUse = false) {
   const set = await $.settings.read({ key: 'effortLevel' })
   const level = typeof set === 'string' && LEVELS.includes(set) ? set : 'high'
   const project = await projectRoot($)
@@ -30,6 +30,6 @@ export async function effortRules($: EngineInterface) {
     ...(own.length ? [`- This project has its own ${own.join(', ')}: use them, not the ${$.plugin.name}:effort-* skills of the same level.`] : []),
     '- Name the level in one line of every reply, e.g. `Effort: low (bookkeeping)`. The user overrides it with `/effort`.',
     `- When unsure, keep \`${level}\`: a wrong low costs more in rework. \`max\` only when the user says so.`,
-    '- Subagents for searching or exploring (only when the user asks for agents): `effort: low`.',
+    `- Subagents for searching or exploring${agentUse ? '' : ' (only when the user asks for agents)'}: \`effort: low\`; other agents get the level their task fits.`,
   ].join('\n')
 }

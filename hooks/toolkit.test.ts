@@ -153,3 +153,53 @@ test('a project with its own effort skills gets those named instead', async ($, 
   expect(text).toMatch(/effort-low, toolkit:effort-medium, toolkit:effort-high, effort-xhigh skills/)
   expect(text).toMatch(/This project has its own effort-low, effort-xhigh: use them/)
 })
+
+const spawnWorld = (on: any) => {
+  world(on)
+  const prompts: string[] = []
+  on('agent.spawn', (_: unknown, e: { prompt: string }) => (prompts.push(e.prompt), { model: 'm', agentId: 'agent-2' }))
+  return prompts
+}
+
+test("a new agent gets the project's agent rules at the end of its prompt", async ($, on) => {
+  const prompts = spawnWorld(on)
+  files.set('/proj/.claude/agent-rules.md', '- Only touch the files your prompt names.\n')
+  await $.agent.spawn({ prompt: 'Fix the build.', description: 'fix build' })
+  expect(prompts[0]).toMatch(/^Fix the build\.\n\n---\nThis project's rules for agents \(\/proj\/\.claude\/agent-rules\.md\):\n\n- Only touch the files your prompt names\.$/)
+})
+
+test('without a rules file, the prompt is left alone', async ($, on) => {
+  const prompts = spawnWorld(on)
+  await $.agent.spawn({ prompt: 'Fix the build.', description: 'fix build' })
+  expect(prompts[0]).toBe('Fix the build.')
+})
+
+test('agentRules off leaves the prompt alone', { options: { agentRules: false } }, async ($, on) => {
+  const prompts = spawnWorld(on)
+  files.set('/proj/.claude/agent-rules.md', '- Only touch the files your prompt names.')
+  await $.agent.spawn({ prompt: 'Fix the build.', description: 'fix build' })
+  expect(prompts[0]).toBe('Fix the build.')
+})
+
+const compose = ($: any, tools: string[]) =>
+  $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools, outputStyle: null, traits: [] })
+
+test('the agent-use rule is off by default', async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
+  const { sections } = await compose($, ['Agent', 'Bash'])
+  expect(sections.some((s: { id: string }) => s.id === 'toolkit:agents')).toBe(false)
+  expect(sections[sections.length - 1].text).toMatch(/\(only when the user asks for agents\)/)
+})
+
+test('with agentUse on, the main chat is told to start agents; agents themselves are not', { options: { agentUse: true } }, async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
+  const main = await compose($, ['Agent', 'Bash'])
+  const agents = main.sections.find((s: { id: string }) => s.id === 'toolkit:agents')
+  expect(agents.text).toMatch(/start subagents without being asked/)
+  const effort = main.sections.find((s: { id: string }) => s.id === 'toolkit:effort')
+  expect(effort.text).not.toMatch(/only when the user asks/)
+  const sub = await compose($, ['Bash', 'Read'])
+  expect(sub.sections.some((s: { id: string }) => s.id === 'toolkit:agents')).toBe(false)
+})

@@ -1,7 +1,7 @@
 {
   "name": "toolkit",
-  "version": "0.4.1",
-  "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, and per-turn effort skills",
+  "version": "0.5.0",
+  "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents and optional automatic agent use",
   "userConfig": {
     "effortRules": {
       "type": "boolean",
@@ -26,6 +26,18 @@
       "title": "Handoff file",
       "description": "Create a handoff file at the first warning in a session",
       "default": true
+    },
+    "agentRules": {
+      "type": "boolean",
+      "title": "Project agent rules",
+      "description": "Add the project's .claude/agent-rules.md to every new subagent's prompt",
+      "default": true
+    },
+    "agentUse": {
+      "type": "boolean",
+      "title": "Start agents on its own",
+      "description": "Tell Claude to start subagents without being asked when parallel work makes sense",
+      "default": false
     },
     "handoffFolder": {
       "type": "string",

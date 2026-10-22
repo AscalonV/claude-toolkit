@@ -6,9 +6,11 @@
 // one small file, `toolkit.tsv`: session id, last write, line. The command picks
 // its session's row by the session_id Claude Code pipes to it.
 //
-// The same usage numbers drive the usage guard (guard.ts); effort.ts adds the effort rules.
+// The same usage numbers drive the usage guard (guard.ts); effort.ts adds the effort rules,
+// agents.ts the project's rules for subagents and the optional rule to start agents unasked.
 import type { EngineInterface, Register } from 'claude-code'
 
+import { agentRules, agentUseRules, withRules } from './agents'
 import { readConfig } from './config'
 import { effortRules } from './effort'
 import { configDir, homeDir } from './paths'
@@ -169,11 +171,24 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // A new subagent gets the project's agent rules at the end of its prompt.
+  on('agent.spawn', async ($, e, next) => {
+    if (!config.agentRules || e.resume) return next(e)
+    const rules = await agentRules($, e.cwd).catch(() => undefined)
+    return next(rules ? { ...e, prompt: withRules(e.prompt, rules) } : e)
+  })
+
   on('prompt.compose', async ($, e, next) => {
     const result = await next(e)
-    if (!config.effortRules) return result
-    const effort = { id: `${$.plugin.name}:effort`, text: await effortRules($), scope: 'session' as const }
-    return { sections: [...result.sections, effort] }
+    const sections = [...result.sections]
+    if (config.effortRules) {
+      sections.push({ id: `${$.plugin.name}:effort`, text: await effortRules($, config.agentUse), scope: 'session' as const })
+    }
+    // Only where the model can start agents: the main chat, not the agents themselves.
+    if (config.agentUse && e.tools.includes('Agent')) {
+      sections.push({ id: `${$.plugin.name}:agents`, text: agentUseRules(), scope: 'session' as const })
+    }
+    return { sections }
   })
 
   on('session.compact', async ($, e, next) => {
