@@ -5,15 +5,25 @@
 // ~/.claude/settings.json (only where none is set), and keeps every running session's line in
 // one small file, `account-statusline.tsv`: session id, last write, line. The command picks
 // its session's row by the session_id Claude Code pipes to it.
+//
+// The same usage numbers drive the usage guard (guard.ts).
 import type { EngineInterface, Register } from 'claude-code'
+
+import { readConfig } from './config'
+import { afterCompact, check, checkAll, setConfig, setUsage } from './guard'
+import type { Window } from './guard'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const pad = (n: number) => String(n).padStart(2, '0')
 
 let name: string | undefined
+let accountId: string | undefined
 let effort: string | undefined
 let ctx: number | undefined
-let limits: { kind: string; percentUsed: number; resetsAt?: string }[] = []
+let limits: Window[] = []
+// After a switch to another account (/login), the windows still standing may be the old
+// account's: they are set aside until a fresh reading, one that moved or has new reset times.
+let held: Window[] | undefined
 
 function resetText(iso: string | undefined, withDay: boolean) {
   if (!iso) return ''
@@ -44,17 +54,32 @@ async function configDir($: EngineInterface) {
 }
 
 // The account isn't exposed to plugins, so read it from the login record in .claude.json.
-async function readName($: EngineInterface) {
+async function readAccount($: EngineInterface): Promise<{ name?: string; id?: string }> {
   const dir = await $.env.get('CLAUDE_CONFIG_DIR')
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
   const path = dir ? `${dir}/.claude.json` : home ? `${home}/.claude.json` : undefined
-  if (!path) return undefined
+  if (!path) return {}
   try {
     const acct = JSON.parse(await $.fs.read(path)).oauthAccount ?? {}
-    return acct.displayName || acct.emailAddress || undefined
+    return { name: acct.displayName || acct.emailAddress || undefined, id: acct.accountUuid }
   } catch {
-    return undefined
+    return {}
   }
+}
+
+const resetKeys = (w: Window[]) => w.map(l => `${l.kind}@${l.resetsAt?.slice(0, 16)}`).sort().join()
+
+// Takes a reading: notes an account switch, and keeps only windows that are current.
+async function takeReading($: EngineInterface, next: Window[], isFresh: boolean) {
+  const acct = await readAccount($)
+  if (accountId && acct.id && acct.id !== accountId) held = limits
+  accountId = acct.id ?? accountId
+  name = acct.name ?? name
+  if (held && (isFresh || (held.length > 0 && resetKeys(next) !== resetKeys(held)))) held = undefined
+  const now = await $.clock.now()
+  // A window whose reset time has passed is stale too.
+  limits = held ? [] : next.filter(l => !l.resetsAt || Date.parse(l.resetsAt) > now)
+  setUsage(limits, name)
 }
 
 // One row per running session; a row not written for this long belongs to a session that ended.
@@ -105,19 +130,28 @@ let loading: Promise<void> | undefined
 const load = ($: EngineInterface) =>
   (loading ??= (async () => {
     $.ui.status(undefined) // clear the yellow notice an earlier version pinned
-    name = await readName($)
+    const acct = await readAccount($)
+    name = acct.name
+    accountId = acct.id
     const level = await $.settings.read({ key: 'effortLevel' })
     if (typeof level === 'string') effort ??= level
     const usage = await $.session.usage()
     ctx ??= usage.context.tokens
-    if (!limits.length) limits = usage.rateLimits
+    if (!limits.length) await takeReading($, usage.rateLimits, false)
     await draw($)
     await install($)
   })())
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const { config, bad } = readConfig(options)
+  setConfig(config)
+
   on('session.start', async ($, e, next) => {
     await load($)
+    if (bad.length) {
+      const text = `account-statusline: invalid setting ${bad.join(', ')}; using the default.`
+      await $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } }).catch(() => $.ui.toast(text))
+    }
     return next(e)
   })
 
@@ -127,13 +161,21 @@ export const register: Register = on => {
       effort = String(e.effort)
       await draw($)
     }
+    await check($, e.agentId) // an agent started after a warning gets its own note here
     return yield* next(e)
   })
 
   on('session.measure', async ($, e, next) => {
     ctx = e.context.tokens
-    limits = e.rateLimits
+    await takeReading($, e.rateLimits, e.changed.includes('rateLimits'))
     await draw($)
+    await checkAll($)
     return next(e)
+  })
+
+  on('session.compact', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.agentId && result.messages) await afterCompact($)
+    return result
   })
 }
