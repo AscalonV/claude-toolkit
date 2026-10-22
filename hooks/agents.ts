@@ -31,7 +31,7 @@ export const withRules = (prompt: string, rules: { path: string; text: string })
 // Added to the main chat's system prompt when the `agentUse` setting is on.
 export const agentUseRules = () =>
   [
-    '# Agents (start them on your own)',
+    '# Agents',
     '- This replaces the default of starting agents only when the user asks: start subagents without being asked whenever parallel work makes sense, for example one agent codes while another researches, reviews or analyses logs, or one agent per repo for a batch of tasks. Small or tightly coupled work stays in the main chat.',
     "- Agents must not interfere: each owns the repo or files named in its prompt, and two agents never edit the same files. Bookkeeping (task lists, notes, the handoff) and the final summary to the user stay with the main chat.",
     "- An agent starts without this conversation's context: give it a self-contained prompt with the goal, the files it owns, what is already known and what to report back.",

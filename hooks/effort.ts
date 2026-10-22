@@ -25,7 +25,7 @@ export async function effortRules($: EngineInterface, agentUse = false) {
   const names = await Promise.all(SKILLS.map(l => skillName($, l, dirs)))
   const own = names.filter(n => !n.includes(':'))
   return [
-    '# Effort (save tokens)',
+    '# Effort',
     `- The default is \`${level}\`. For a turn with tool work, pick the level from the descriptions of the ${names.join(', ')} skills. If it isn't \`${level}\`, invoke that skill in the same message as the first tool call (no extra round trip). A turn without tool calls doesn't switch.`,
     ...(own.length ? [`- This project has its own ${own.join(', ')}: use them, not the ${$.plugin.name}:effort-* skills of the same level.`] : []),
     '- Name the level in one line of every reply, e.g. `Effort: low (bookkeeping)`. The user overrides it with `/effort`.',
