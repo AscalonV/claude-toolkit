@@ -17,9 +17,13 @@ let windows: Window[] = []
 let account: string | undefined
 const warned = new Set<string>()
 let handoff: Promise<string | undefined> | undefined
+// The task's own handoff file, named by Claude (ContextBudget `handoff`): it wins over the draft.
+let taskHandoff: string | undefined
 
 export const setConfig = (c: Config) => (config = c)
 export const setUsage = (w: Window[], name: string | undefined) => ((windows = w), (account = name))
+export const setTaskHandoff = (path: string) => (taskHandoff = path)
+export const taskHandoffPath = () => taskHandoff
 
 function resets(iso: string | undefined) {
   if (!iso) return ''
@@ -32,10 +36,10 @@ const usageLines = (): Usage[] =>
     .filter(w => LABELS[w.kind])
     .map(w => ({ label: LABELS[w.kind], percent: Math.round(w.percentUsed), resets: resets(w.resetsAt) }))
 
-// This session's handoff: the one it already has (from before a reload or restart), else a new one
-// created on first use.
+// This session's handoff: the task's own file when Claude named one, else the draft it already has
+// (from before a reload or restart), else a new draft created on first use.
 function ensureHandoff($: EngineInterface) {
-  return (handoff ??= makeHandoff($))
+  return taskHandoff ? Promise.resolve(taskHandoff) : (handoff ??= makeHandoff($))
 }
 
 async function makeHandoff($: EngineInterface) {
@@ -53,13 +57,18 @@ function note(stage: Stage, w: Window, isAgent: boolean, path: string | undefine
   const limit = config.thresholds[w.kind as keyof Config['thresholds']][stage]
   const head = `Usage guard: ${LABELS[w.kind]} limit at ${Math.round(w.percentUsed)}% (${stage === 'stop' ? 'stop' : 'wrap-up'} at ${limit}%${resets(w.resetsAt)}).`
   const file = path ? `the handoff file ${path}` : 'a handoff note'
+  // A plugin draft: Claude either fills it in (and marks it open) or uses the task's own file.
+  const draft =
+    path && path !== taskHandoff
+      ? ` If the task already has its own handoff file, update that one instead, name it to ContextBudget (handoff) and delete ${path}; otherwise fill it in and set its Status to open.`
+      : ''
   const body = isAgent
     ? stage === 'wrapUp'
       ? 'Finish your current step and update your notes file, then carry on, but start no large new work.'
       : 'Stop: start no new work. Leave the repo buildable, write your final notes, then end with a short summary.'
     : stage === 'wrapUp'
-      ? `Finish the current step, then fill in ${file} now. Tell running agents to update their notes files. Then carry on, but start no large new work.`
-      : `Start no new work. Tell running agents to stop, leave the repo buildable and write final notes. Fold their notes into ${file}, then tell the user in one line that the handoff is ready.`
+      ? `Finish the current step, then fill in ${file} now.${draft} Tell running agents to update their notes files. Then carry on, but start no large new work.`
+      : `Start no new work. Tell running agents to stop, leave the repo buildable and write final notes. Fold their notes into ${file}.${draft} Then tell the user in one line that the handoff is ready.`
   return [head, body, config.extraNote].filter(Boolean).join(' ')
 }
 
@@ -98,12 +107,20 @@ export async function checkAll($: EngineInterface) {
   } catch {}
 }
 
-// After the main conversation is compacted: point Claude at this session's handoff, or the newest.
+// The handoff this session knows: the task's own file, else its draft (also one from before a reload).
+// Never another session's file: that belongs to another task.
+export async function knownHandoff($: EngineInterface) {
+  if (taskHandoff) return taskHandoff
+  const own = handoff ? await handoff : undefined
+  if (own || !config.handoffFile) return own
+  const { dir } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
+  return newestHandoff($, dir, await $.session.id())
+}
+
+// After the main conversation is compacted: point Claude at this session's handoff, if it has one.
 export async function afterCompact($: EngineInterface) {
   if (!config.guard) return
-  const own = handoff ? await handoff : undefined
-  const { dir } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
-  const path = own ?? (await newestHandoff($, dir, await $.session.id())) ?? (await newestHandoff($, dir))
+  const path = await knownHandoff($).catch(() => undefined)
   if (path) await send($, `Usage guard: the conversation was just compacted. Read the handoff file ${path} and carry on from there.`)
 }
 

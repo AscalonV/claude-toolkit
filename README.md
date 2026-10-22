@@ -44,19 +44,24 @@ When a stage is reached, the plugin adds a note to Claude's next request (contex
 - **Wrap-up:** finish the current step, fill in the handoff file, tell running agents to update their notes, then go on without starting large new work.
 - **Stop:** start no new work, tell agents to stop, leave the repo buildable and write final notes, fold the notes into the handoff file, then tell you in one line that the handoff is ready.
 - **Subagents** get their own shorter note in their own conversation.
-- **After compaction**, Claude is told to read this session's handoff file, or the newest one in the handoff folder.
+- **After compaction**, Claude is told to read this session's handoff file: the task's own file when Claude named one, else the session's draft. It never points to another session's file, which belongs to another task; with neither, Claude goes on from the compaction summary.
 
 ### Handoff file
 
-At the first warning in a session, the plugin creates `<YYYY-MM-DD>-<HHMM>-<session id, 8 chars>.md`. Where it goes depends on whether the session runs in a project:
+**The task's own file wins.** When a task already has a handoff (written the project's way, or the one a new chat continues from), Claude names it with `ContextBudget` (`handoff: "<path>"`), and the guard notes and the compaction point to it instead of a draft.
+
+Otherwise, at the first warning in a session, the plugin creates a draft `<YYYY-MM-DD>-<HHMM>-<session id, 8 chars>.md`. Where it goes depends on whether the session runs in a project:
 
 - **In a project:** `<project>/handoffs/`. The project is the git top level, or else the nearest folder up from the working directory that has a `CLAUDE.md` or `.claude/` folder. Your home folder doesn't count, even though it holds `~/.claude`.
 - **Outside a project** (a broad task, for example started in your home folder): `~/.claude/handoffs/`, or `CLAUDE_CONFIG_DIR/handoffs/`.
 
-If the session already has one (from before a restart or plugin reload), the guard keeps using that file instead of starting a new one. It never overwrites an existing file. It fills in what it knows and leaves the rest for Claude:
+If the session already has one (from before a restart or plugin reload), the guard keeps using that file instead of starting a new one. It never overwrites an existing file. It fills in what it knows and leaves the rest for Claude. The draft says `Status: draft` until Claude fills it in and sets it to `open`, so a task finder that looks for `Status: open` never picks up an empty draft; the guard note also tells Claude to delete the draft when the task has its own file. Account, usage and agents are a snapshot from when it was created:
 
 ```markdown
 # Handoff 2026-10-22 14:05
+Updated: 2026-10-22 14:05 · Status: draft (set to open once filled in)
+
+Created by the usage guard; the lines below are a snapshot from that moment.
 
 - Account: Alex
 - Session: `abcdef12-...`
@@ -68,7 +73,7 @@ If the session already has one (from before a restart or plugin reload), the gua
 - Usage 5-hour: 76% (resets 10/22 15:40)
 - Usage weekly: 41% (resets 10/24 09:00)
 
-## Running agents
+## Running agents (when created)
 
 - build docs (general-purpose, running, id `a1b2`)
 
@@ -162,6 +167,7 @@ Every request sends the whole conversation, so a long chat costs more with every
 - **At 90 % of the budget it's decision time**, checked each time the context grows, so Claude hears it mid-turn:
   - the task needs the context: Claude raises the budget and carries on, or
   - otherwise Claude finishes the current step, fills in the handoff, asks for a compaction (`compact: true`) and ends its turn. With `carryOn: true` (the task isn't finished and needs nothing from you) the plugin starts the next turn by itself after compacting, from the handoff; without it, it waits for you.
+- A new budget gets its own 90 % note, also when the context is already past 90 % of it.
 - Past the whole budget with no decision, the plugin compacts at the end of the turn and waits for you.
 - At the usage guard's stop stage, nothing resumes by itself.
 - The status line shows `ctx 95k/300k`.

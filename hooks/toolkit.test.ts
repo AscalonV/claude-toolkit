@@ -333,3 +333,72 @@ test('contextBudget 0: no rules, no compaction', { options: { contextBudget: 0 }
   await clock.advance(1000)
   expect(compactedWith).toBe(undefined)
 })
+
+test("a compaction never names another session's handoff", async ($, on) => {
+  const session = world(on)
+  files.set('/proj/handoffs/2026-10-22-0930-99999999.md', '# Handoff of another session')
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(10) as never) // no warning, so no draft of its own
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
+  expect(texts(session.appended()).some(t => /handoff/.test(t))).toBe(false)
+})
+
+test("the task's own handoff, named to ContextBudget, wins over a draft", async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const answer = JSON.stringify(await $.tool.call({ tool: budgetTool, tokens: 300000, reason: 'task', handoff: '/proj/handoffs/2026-10-22-task.md' } as never))
+  expect(answer).toMatch(/Handoff file: \/proj\/handoffs\/2026-10-22-task\.md/)
+  await $.session.measure(measure(86) as never)
+  expect(texts(session.appended())[0]).toMatch(/fill in the handoff file \/proj\/handoffs\/2026-10-22-task\.md now\. Tell/)
+  expect([...files.keys()].some(p => /\/proj\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12/.test(p))).toBe(false)
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
+  expect(texts(session.appended()).pop()).toMatch(/Read the handoff file \/proj\/handoffs\/2026-10-22-task\.md/)
+})
+
+test('a draft is marked as one until Claude fills it in', async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(86) as never)
+  const draft = [...files.keys()].find(p => p.startsWith('/proj/handoffs/'))!
+  expect(files.get(draft)).toMatch(/^# Handoff .*\nUpdated: \d{4}-\d{2}-\d{2} \d{2}:\d{2} · Status: draft/)
+  expect(texts(session.appended())[0]).toMatch(/update that one instead, name it to ContextBudget \(handoff\) and delete .*; otherwise fill it in and set its Status to open/)
+})
+
+test("a session's -2 handoff is newer than its first", async ($, on) => {
+  const session = world(on)
+  files.set('/proj/handoffs/2026-10-22-0900-abcdef12.md', 'first')
+  files.set('/proj/handoffs/2026-10-22-0900-abcdef12-2.md', 'second')
+  files.set('/proj/handoffs/2026-10-22-0900-abcdef12-10.md', 'tenth')
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(86) as never)
+  expect(texts(session.appended())[0]).toMatch(/abcdef12-10\.md/)
+})
+
+test('a new budget gets its own 90 % note, also when the context is already past it', async ($, on) => {
+  const { session } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 185000
+  await $.session.measure(measure(10) as never)
+  await $.tool.call({ tool: budgetTool, tokens: 205000, reason: 'a bit more' } as never)
+  ctxNow = 190000
+  await $.session.measure(measure(10) as never)
+  const notes = texts(session.appended()).filter(t => /Context budget:/.test(t))
+  expect(notes.length).toBe(2)
+  expect(notes[1]).toMatch(/190k of 205k/)
+})
+
+test('our status line from an earlier version is updated; one set elsewhere or by someone else stays', async ($, on) => {
+  const earlier = { type: 'command', command: `id=x; grep -F "$id" "/home/t/.claude/toolkit.tsv" | head -1 | cut -f3` }
+  world(on, { statusLine: earlier })
+  files.set('/home/t/.claude/settings.json', JSON.stringify({ statusLine: earlier }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(JSON.parse(files.get('/home/t/.claude/settings.json')!).statusLine.command).toContain('[ -z "$id" ] || grep -F')
+})
+
+test("someone else's status line is left alone", async ($, on) => {
+  const theirs = { type: 'command', command: 'echo mine' }
+  world(on, { statusLine: theirs })
+  files.set('/home/t/.claude/settings.json', JSON.stringify({ statusLine: theirs }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(JSON.parse(files.get('/home/t/.claude/settings.json')!).statusLine.command).toBe('echo mine')
+})

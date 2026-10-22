@@ -104,17 +104,22 @@ const draw = async ($: EngineInterface) => {
 }
 
 // The command reads the session_id from the JSON on stdin and prints that session's line.
-// It runs in Git Bash on Windows and sh elsewhere.
+// It runs in Git Bash on Windows and sh elsewhere. Without an id it prints nothing (an empty
+// pattern would match another session's row).
 const command = (file: string) =>
   `id=$(grep -o '"session_id": *"[^"]*"' | head -1 | sed 's/.*"\\([^"]*\\)"$/\\1/'); ` +
-  `grep -F "$id" "${file}" | head -1 | cut -f3`
+  `[ -z "$id" ] || grep -F "$id" "${file}" | head -1 | cut -f3`
 
 // Adds the statusLine to the user's settings.json once, unless any settings already have one.
+// Our own line from an earlier version (or from before the rename) is brought up to date.
 async function install($: EngineInterface) {
-  const current = (await $.settings.read({ key: 'statusLine' })) as { command?: unknown } | undefined
-  if (current && !String(current.command ?? '').includes(OLD_TABLE)) return
   const base = await configDir($)
   if (!base) return
+  const wanted = command(`${base}/${TABLE}`)
+  const current = (await $.settings.read({ key: 'statusLine' })) as { command?: unknown } | undefined
+  const was = String(current?.command ?? '')
+  const isOurs = was.includes(OLD_TABLE) || was.includes(`"${base}/${TABLE}"`)
+  if (current && (!isOurs || was === wanted)) return
   const path = `${base}/settings.json`
   let settings: Record<string, unknown> = {}
   try {
@@ -122,7 +127,9 @@ async function install($: EngineInterface) {
   } catch (err) {
     if (await $.fs.exists(path)) return // unreadable: leave the person's file alone
   }
-  settings.statusLine = { type: 'command', command: command(`${base}/${TABLE}`) }
+  // Ours, but set in another settings file: that one isn't ours to change.
+  if (current && String((settings.statusLine as { command?: unknown } | undefined)?.command ?? '') !== was) return
+  settings.statusLine = { type: 'command', command: wanted }
   await $.fs.write(path, JSON.stringify(settings, null, 2) + '\n')
 }
 

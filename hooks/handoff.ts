@@ -50,16 +50,19 @@ export async function handoffDir($: EngineInterface, folder: string, outside: st
   return { dir: `${project ?? (await configDir($))}/${slash(pick)}`, project }
 }
 
-// The newest handoff in the folder, by the date-and-time in its name; with a session id, the
-// newest of that session (so a reload or restart goes on with the file it already has).
-export async function newestHandoff($: EngineInterface, dir: string, sessionId?: string) {
-  const own = sessionId ? `${sessionId.slice(0, 8)}(-\\d+)?` : '.*'
-  const name = new RegExp(`^\\d{4}-\\d{2}-\\d{2}-\\d{4}-${own}\\.md$`)
+// The newest handoff of this session in the folder, by the date-and-time in its name and then its
+// -2, -3, ... (so a reload or restart goes on with the file it already has).
+export async function newestHandoff($: EngineInterface, dir: string, sessionId: string) {
+  const name = new RegExp(`^(\\d{4}-\\d{2}-\\d{2}-\\d{4})-${sessionId.slice(0, 8)}(?:-(\\d+))?\\.md$`)
+  const key = (f: string) => {
+    const [, stamp, n] = name.exec(f)!
+    return `${stamp}-${String(n ?? 1).padStart(3, '0')}`
+  }
   try {
     const names = (await $.fs.list(dir))
       .filter(f => f.kind === 'file' && name.test(f.name))
       .map(f => f.name)
-      .sort()
+      .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
     return names.length ? `${dir}/${names[names.length - 1]}` : undefined
   } catch {
     return undefined
@@ -81,8 +84,14 @@ async function render($: EngineInterface, info: HandoffInfo, now: Date) {
   const status = branch === undefined ? undefined : await git($, ['status', '--porcelain'], cwd)
   const changed = status ? status.split('\n').slice(0, 50).map(l => `  - \`${l}\``) : ['  - none']
   const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`
+  // A draft until Claude fills it in: a task finder that looks for `Status: open` skips it, so a
+  // file nobody filled in never passes for a task to continue.
   return [
-    `# Handoff ${date} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    `# Handoff ${date} ${time}`,
+    `Updated: ${date} ${time} · Status: draft (set to open once filled in)`,
+    '',
+    'Created by the usage guard; the lines below are a snapshot from that moment.',
     '',
     `- Account: ${info.account ?? 'unknown'}`,
     `- Session: \`${info.sessionId}\``,
@@ -91,7 +100,7 @@ async function render($: EngineInterface, info: HandoffInfo, now: Date) {
     ...(branch === undefined ? ['- Git: not a repository'] : [`- Git branch: \`${branch || '(detached)'}\``, '- Uncommitted files:', ...changed]),
     ...info.usage.map(u => `- Usage ${u.label}: ${u.percent}%${u.resets}`),
     '',
-    '## Running agents',
+    '## Running agents (when created)',
     '',
     ...(await agentLines($)),
     '',
