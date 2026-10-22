@@ -3,6 +3,9 @@ import { expect, mock, test } from 'claude-code/testing'
 const NOW = Date.parse('2026-10-22T12:00:00Z')
 const RESET = '2026-10-22T15:40:00Z'
 const files = new Map<string, string>()
+let ctxNow = 0 // the context size session.usage answers
+let clock: any
+let compactedWith: string | undefined // the instructions of the last compaction
 // The engine hands paths over resolved for this OS (C:\home\t on Windows): compare them as /home/t.
 const norm = (p: string) => p.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
 
@@ -12,10 +15,13 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
   files.clear()
   files.set('/home/t/.claude.json', JSON.stringify({ oauthAccount: { displayName: 'Alex', accountUuid: 'acct-1' } }))
   mock.env(on, { HOME: '/home/t' })
-  mock.clock(on, { now: NOW })
+  ctxNow = 0
+  compactedWith = undefined
+  clock = mock.clock(on, { now: NOW })
+  on('tool.register', () => ({ value: undefined }))
   on('session.id', () => ({ value: 'abcdef12-3456-7890-abcd-ef1234567890' }))
   on('session.cwd', () => ({ value: cwd }))
-  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200000 }, rateLimits: [] } }))
+  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 1000000, tokens: ctxNow }, rateLimits: [] } }))
   on('settings.read', () => ({ value: { statusLine } }))
   on('fs.read', (_: unknown, e: { path: string }) =>
     files.has(norm(e.path)) ? { value: files.get(norm(e.path)) } : Promise.reject(new Error('missing')))
@@ -30,7 +36,8 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
   on('agent.list', () => ({ value: [{ id: 'agent-1', description: 'build docs', type: 'general-purpose', status: 'running' }] }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.measure', (_: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
-  on('session.compact', () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] }))
+  on('session.compact', (_: unknown, e: { instructions?: string }) => ((compactedWith = e.instructions ?? ''), { messages: [{ role: 'user', text: 'summary', toolUses: [] }] }))
+  on('turn.complete', () => ({ text: '' }))
   on('ui.status', () => ({ value: undefined }))
   return mock.session(on)
 }
@@ -189,7 +196,7 @@ test('the agent-use rule is off by default', async ($, on) => {
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
   const { sections } = await compose($, ['Agent', 'Bash'])
   expect(sections.some((s: { id: string }) => s.id === 'toolkit:agents')).toBe(false)
-  expect(sections[sections.length - 1].text).toMatch(/\(only when the user asks for agents\)/)
+  expect(sections.find((s: { id: string }) => s.id === 'toolkit:effort').text).toMatch(/\(only when the user asks for agents\)/)
 })
 
 test('with agentUse on, the main chat is told to start agents; agents themselves are not', { options: { agentUse: true } }, async ($, on) => {
@@ -202,4 +209,61 @@ test('with agentUse on, the main chat is told to start agents; agents themselves
   expect(effort.text).not.toMatch(/only when the user asks/)
   const sub = await compose($, ['Bash', 'Read'])
   expect(sub.sections.some((s: { id: string }) => s.id === 'toolkit:agents')).toBe(false)
+})
+
+const budgetTool = 'mcp__toolkit__ContextBudget'
+const turnEnd = ($: any) => $.turn.complete({ answer: '', reason: 'answer', durationMs: 1, isAborted: false, turnId: 't1' } as never)
+
+test('Claude sets the budget; above the cap only when the user asked', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const set = async (input: object) => JSON.stringify(await $.tool.call({ tool: budgetTool, ...input } as never))
+  expect(await set({ tokens: 500000, reason: 'render debugging' })).toMatch(/set to 500k/)
+  expect(await set({ tokens: 950000, reason: 'huge' })).toMatch(/set to 800k \(capped/)
+  expect(await set({ tokens: 950000, reason: 'user wants it', userAsked: true })).toMatch(/set to 950k/)
+  expect(await set({ tokens: 20000, reason: 'tiny' })).toMatch(/set to 100k/)
+})
+
+test('near the budget a handoff note, past it a compaction', async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: budgetTool, tokens: 200000, reason: 'small fix' } as never)
+
+  ctxNow = 150000
+  await turnEnd($)
+  expect(session.appended().length).toBe(0)
+
+  ctxNow = 185000
+  await turnEnd($)
+  await turnEnd($)
+  const notes = texts(session.appended())
+  expect(notes.length).toBe(1)
+  expect(notes[0]).toMatch(/^main: Context budget: 185k of 200k\. Fill in the handoff now/)
+
+  ctxNow = 210000
+  await turnEnd($)
+  expect(compactedWith).toBe(undefined)
+  await clock.advance(1000)
+  expect(compactedWith).toMatch(/Context budget of 200k reached\. Keep: the task, its handoff file/)
+})
+
+test('the budget rules join the main prompt only, and contextBudget 0 turns it all off', async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
+  const main = await compose($, ['Agent', budgetTool])
+  expect(main.sections.find((s: { id: string }) => s.id === 'toolkit:context').text).toMatch(/set the budget with the ContextBudget tool/)
+  const sub = await compose($, ['Bash'])
+  expect(sub.sections.some((s: { id: string }) => s.id === 'toolkit:context')).toBe(false)
+})
+
+test('contextBudget 0: no rules, no compaction', { options: { contextBudget: 0 } }, async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const { sections } = await compose($, ['Agent'])
+  expect(sections.some((s: { id: string }) => s.id === 'toolkit:context')).toBe(false)
+  ctxNow = 900000
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toBe(undefined)
 })

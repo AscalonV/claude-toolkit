@@ -10,6 +10,8 @@ export type Config = {
   handoffFile: boolean
   agentRules: boolean
   agentUse: boolean
+  contextBudget: number
+  contextCap: number
   handoffFolder: string
   outsideProjectFolder: string
   extraNote: string
@@ -23,6 +25,8 @@ export const DEFAULTS: Config = {
   handoffFile: true,
   agentRules: true,
   agentUse: false,
+  contextBudget: 300000,
+  contextCap: 800000,
   handoffFolder: 'handoffs',
   outsideProjectFolder: 'handoffs',
   extraNote: '',
@@ -44,6 +48,15 @@ const percent = (v: unknown, fallback: number, key: string, bad: string[]) => {
   if (v === undefined || v === '') return fallback
   const n = typeof v === 'number' ? v : Number(v)
   if (Number.isFinite(n) && n > 0 && n <= 100) return n
+  bad.push(key)
+  return fallback
+}
+
+// Tokens from 100000 to 1000000, or 0 where `isOff` allows it.
+const tokens = (v: unknown, fallback: number, key: string, bad: string[], isOff = false) => {
+  if (v === undefined || v === '') return fallback
+  const n = typeof v === 'number' ? v : Number(v)
+  if ((isOff && n === 0) || (Number.isInteger(n) && n >= 100000 && n <= 1000000)) return n
   bad.push(key)
   return fallback
 }
@@ -74,6 +87,8 @@ export function readConfig(options: PluginOptions): { config: Config; bad: strin
       handoffFile: flag(options.handoffFile, DEFAULTS.handoffFile, 'handoffFile', bad),
       agentRules: flag(options.agentRules, DEFAULTS.agentRules, 'agentRules', bad),
       agentUse: flag(options.agentUse, DEFAULTS.agentUse, 'agentUse', bad),
+      contextBudget: tokens(options.contextBudget, DEFAULTS.contextBudget, 'contextBudget', bad, true),
+      contextCap: tokens(options.contextCap, DEFAULTS.contextCap, 'contextCap', bad),
       handoffFolder: folder('handoffFolder'),
       outsideProjectFolder: folder('outsideProjectFolder'),
       extraNote: typeof extra === 'string' ? extra.trim() : DEFAULTS.extraNote,

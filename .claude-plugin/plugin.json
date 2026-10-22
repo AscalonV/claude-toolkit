@@ -1,7 +1,7 @@
 {
   "name": "toolkit",
-  "version": "0.5.0",
-  "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents and optional automatic agent use",
+  "version": "0.6.0",
+  "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents, optional automatic agent use and a per-task context budget",
   "userConfig": {
     "effortRules": {
       "type": "boolean",
@@ -38,6 +38,22 @@
       "title": "Start agents on its own",
       "description": "Tell Claude to start subagents without being asked when parallel work makes sense",
       "default": false
+    },
+    "contextBudget": {
+      "type": "number",
+      "title": "Default context budget",
+      "description": "Tokens at which the conversation is compacted until Claude sets a budget for the task (100000 to 1000000); 0 turns the context budget off",
+      "default": 300000,
+      "min": 0,
+      "max": 1000000
+    },
+    "contextCap": {
+      "type": "number",
+      "title": "Context budget cap",
+      "description": "The largest budget Claude may set on its own; above it only when you ask",
+      "default": 800000,
+      "min": 100000,
+      "max": 1000000
     },
     "handoffFolder": {
       "type": "string",

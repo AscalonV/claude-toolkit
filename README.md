@@ -5,7 +5,8 @@ A Claude Code plugin with four parts:
 - a **status line** that shows who is signed in and how much usage is left,
 - a **usage guard** that warns Claude before a limit is hit and starts a handoff file,
 - **effort skills** so Claude picks its thinking effort per turn,
-- **agents**: a project's own rules for its subagents, and an optional rule to start agents without being asked.
+- **agents**: a project's own rules for its subagents, and an optional rule to start agents without being asked,
+- a **context budget** that Claude sets per task, so the conversation is compacted early on simple tasks and late on complex ones.
 
 ## Status line
 
@@ -97,6 +98,8 @@ It never overwrites an existing file. It fills in what it knows and leaves the r
 | `fiveHourWrapUp` / `fiveHourStop` | `85` / `90` | 5-hour thresholds in % |
 | `weeklyWrapUp` / `weeklyStop` | `90` / `97` | Weekly thresholds in % |
 | `extraNote` | empty | Text appended to every guard note |
+| `contextBudget` | `300000` | Budget until Claude sets one for the task; `0` turns the context budget off |
+| `contextCap` | `800000` | The largest budget Claude sets on its own; above it only when you ask |
 
 Set them when installing (`--config key=value`, repeatable), later in `/plugin` (the plugin's configure screen), or from a shell:
 
@@ -143,6 +146,21 @@ It is off by default, because every agent starts with an empty context and costs
 ```
 echo '{"agentUse":"true"}' | claude plugin configure toolkit@ascalonv --values-stdin
 ```
+
+## Context budget
+
+Every request sends the whole conversation, so a long chat costs more with every turn. Compacting early saves tokens, but in the middle of complex work a compaction drops details that matter. So Claude picks the budget per task:
+
+| Budget | Fits |
+| --- | --- |
+| ~200k | bookkeeping, small fixes, tasks that split well across handoffs |
+| 300k | normal feature work (the default until a budget is set) |
+| 500k to the cap | complex work where a compaction would cost quality: debugging or rendering across many files, large refactors, long log analysis |
+
+- At the start of every task, also a new task in the same chat, Claude sets the budget with the plugin's `ContextBudget` tool and names it in its effort line, e.g. `Effort: high (new feature) · Context: 300k`. Ask for another size any time.
+- Above `contextCap` (800k) only when you ask; never above the model's window.
+- At 90 % of the budget Claude is told to fill in the handoff. At the end of the turn that passes the budget, the plugin compacts the conversation, keeping the task, its handoff and open questions. The status line shows `ctx 95k/300k`.
+- The plugin can only compact between turns, so Claude Code's own compaction stays as the safety net for one long turn. Don't set `autoCompactWindow` below the cap: Claude Code would compact there before a larger budget is reached.
 
 ## Install
 

@@ -7,11 +7,13 @@
 // its session's row by the session_id Claude Code pipes to it.
 //
 // The same usage numbers drive the usage guard (guard.ts); effort.ts adds the effort rules,
-// agents.ts the project's rules for subagents and the optional rule to start agents unasked.
+// agents.ts the project's rules for subagents and the optional rule to start agents unasked,
+// context.ts the per-task context budget.
 import type { EngineInterface, Register } from 'claude-code'
 
 import { agentRules, agentUseRules, withRules } from './agents'
 import { readConfig } from './config'
+import { TOOL, afterCompaction, afterTurn, currentBudget, rules as budgetRules, setBudget, setFromTool, toolSpec } from './context'
 import { effortRules } from './effort'
 import { configDir, homeDir } from './paths'
 import { afterCompact, check, checkAll, setConfig, setUsage } from './guard'
@@ -41,7 +43,7 @@ function line() {
   const parts: string[] = []
   if (name) parts.push(name)
   if (effort) parts.push(effort)
-  if (ctx) parts.push(`ctx ${Math.floor(ctx / 1000)}k`)
+  if (ctx) parts.push(`ctx ${Math.floor(ctx / 1000)}k${currentBudget() ? `/${Math.round(currentBudget() / 1000)}k` : ''}`)
   for (const [kind, label, withDay] of [['five_hour', '5h', false], ['seven_day', 'week', true]] as const) {
     const w = limits.find(l => l.kind === kind)
     if (w) parts.push(`${label} ${Math.round(w.percentUsed)}%${resetText(w.resetsAt, withDay)}`)
@@ -143,9 +145,11 @@ const load = ($: EngineInterface) =>
 export const register: Register = (on, options) => {
   const { config, bad } = readConfig(options)
   setConfig(config)
+  setBudget(config.contextBudget, config.contextCap)
 
   on('session.start', async ($, e, next) => {
     await load($)
+    if (config.contextBudget) await $.tool.register(toolSpec)
     if (bad.length) {
       const text = `${$.plugin.name}: invalid setting ${bad.join(', ')}; using the default.`
       await $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } }).catch(() => $.ui.toast(text))
@@ -171,6 +175,20 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The ContextBudget tool: the main chat only.
+  on('tool.call', { tool: `mcp__toolkit__${TOOL}` }, async ($, e) => {
+    if (e.agentId) return { deny: "The context budget is the main conversation's; agents have their own window." }
+    const result = await setFromTool($, e as unknown as Record<string, unknown>)
+    await draw($)
+    return result
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.agentId && !e.isAborted) await afterTurn($)
+    return result
+  })
+
   // A new subagent gets the project's agent rules at the end of its prompt.
   on('agent.spawn', async ($, e, next) => {
     if (!config.agentRules || e.resume) return next(e)
@@ -188,12 +206,18 @@ export const register: Register = (on, options) => {
     if (config.agentUse && e.tools.includes('Agent')) {
       sections.push({ id: `${$.plugin.name}:agents`, text: agentUseRules(), scope: 'session' as const })
     }
+    if (config.contextBudget && e.tools.includes('Agent')) {
+      sections.push({ id: `${$.plugin.name}:context`, text: budgetRules(), scope: 'session' as const })
+    }
     return { sections }
   })
 
   on('session.compact', async ($, e, next) => {
     const result = await next(e)
-    if (!e.agentId && result.messages) await afterCompact($)
+    if (!e.agentId && result.messages) {
+      afterCompaction()
+      await afterCompact($)
+    }
     return result
   })
 }
