@@ -224,34 +224,85 @@ test('Claude sets the budget; above the cap only when the user asked', async ($,
   expect(await set({ tokens: 20000, reason: 'tiny' })).toMatch(/set to 100k/)
 })
 
-test('near the budget a handoff note, past it a compaction', async ($, on) => {
+// A world where the queued prompts are kept.
+const budgetWorld = (on: any) => {
   const session = world(on)
+  const submitted: string[] = []
+  on('prompt.submit', (_: unknown, e: { text: string }) => (submitted.push(e.text), { text: e.text }))
+  return { session, submitted }
+}
+const start = async ($: any, budget: number) => {
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  await $.tool.call({ tool: budgetTool, tokens: 200000, reason: 'small fix' } as never)
+  await $.tool.call({ tool: budgetTool, tokens: budget, reason: 'test' } as never)
+}
+
+test('at 90 % Claude must decide; a compaction it asks for with carryOn resumes the task', async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
 
   ctxNow = 150000
-  await turnEnd($)
+  await $.session.measure(measure(10) as never)
   expect(session.appended().length).toBe(0)
 
   ctxNow = 185000
-  await turnEnd($)
-  await turnEnd($)
+  await $.session.measure(measure(10) as never)
+  await $.session.measure(measure(10) as never)
   const notes = texts(session.appended())
   expect(notes.length).toBe(1)
-  expect(notes[0]).toMatch(/^main: Context budget: 185k of 200k\. Fill in the handoff now/)
+  expect(notes[0]).toMatch(/^main: Context budget: 185k of 200k\. Decide now/)
 
-  ctxNow = 210000
+  // Between 90 % and the budget, no decision yet: nothing happens at the turn's end.
   await turnEnd($)
+  await clock.advance(1000)
   expect(compactedWith).toBe(undefined)
+
+  const answer = JSON.stringify(await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never))
+  expect(answer).toMatch(/then the task resumes by itself/)
+  await turnEnd($)
   await clock.advance(1000)
   expect(compactedWith).toMatch(/Context budget of 200k reached\. Keep: the task, its handoff file/)
+  expect(submitted.length).toBe(1)
+  expect(submitted[0]).toMatch(/^Continue the task/)
+})
+
+test('raising the budget at 90 % lets the work go on without a compaction', async ($, on) => {
+  budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 190000
+  await $.session.measure(measure(10) as never)
+  await $.tool.call({ tool: budgetTool, tokens: 500000, reason: 'needs the context' } as never)
+  ctxNow = 230000
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toBe(undefined)
+})
+
+test('past the whole budget with no decision: compacted, then the user is waited for', async ($, on) => {
+  const { submitted } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 210000
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(submitted.length).toBe(0)
+})
+
+test("at the usage guard's stop stage, a carryOn compaction does not resume by itself", async ($, on) => {
+  const { submitted } = budgetWorld(on)
+  await start($, 200000)
+  await $.session.measure(measure(95) as never)
+  await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(submitted.length).toBe(0)
 })
 
 test('the budget rules join the main prompt only, and contextBudget 0 turns it all off', async ($, on) => {
   world(on)
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
   const main = await compose($, ['Agent', budgetTool])
-  expect(main.sections.find((s: { id: string }) => s.id === 'toolkit:context').text).toMatch(/set the budget with the ContextBudget tool/)
+  expect(main.sections.find((s: { id: string }) => s.id === 'toolkit:context').text).toMatch(/set it with the ContextBudget tool/)
   const sub = await compose($, ['Bash'])
   expect(sub.sections.some((s: { id: string }) => s.id === 'toolkit:context')).toBe(false)
 })

@@ -104,3 +104,11 @@ export async function afterCompact($: EngineInterface) {
   const path = own ?? (await newestHandoff($, dir))
   if (path) await send($, `Usage guard: the conversation was just compacted. Read the handoff file ${path} and carry on from there.`)
 }
+
+// True once a limit reached its stop stage: nothing should then start work by itself.
+export const atStop = () =>
+  config.guard &&
+  windows.some(w => {
+    const t = config.thresholds[w.kind as keyof Config['thresholds']]
+    return Boolean(t) && w.percentUsed >= t.stop
+  })

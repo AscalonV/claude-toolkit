@@ -13,10 +13,10 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { agentRules, agentUseRules, withRules } from './agents'
 import { readConfig } from './config'
-import { TOOL, afterCompaction, afterTurn, currentBudget, rules as budgetRules, setBudget, setFromTool, toolSpec } from './context'
+import { TOOL, afterCompaction, afterTurn, beforeRequest, currentBudget, rules as budgetRules, setBudget, setFromTool, toolSpec } from './context'
 import { effortRules } from './effort'
 import { configDir, homeDir } from './paths'
-import { afterCompact, check, checkAll, setConfig, setUsage } from './guard'
+import { afterCompact, atStop, check, checkAll, setConfig, setUsage } from './guard'
 import type { Window } from './guard'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -172,6 +172,7 @@ export const register: Register = (on, options) => {
     await takeReading($, e.rateLimits, e.changed.includes('rateLimits'))
     await draw($)
     await checkAll($)
+    await beforeRequest($) // the context changed: past 90 % of the budget, Claude must decide
     return next(e)
   })
 
@@ -185,7 +186,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (!e.agentId && !e.isAborted) await afterTurn($)
+    if (!e.agentId && !e.isAborted) await afterTurn($, !atStop())
     return result
   })
 

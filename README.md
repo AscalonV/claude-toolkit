@@ -159,8 +159,13 @@ Every request sends the whole conversation, so a long chat costs more with every
 
 - At the start of every task, also a new task in the same chat, Claude sets the budget with the plugin's `ContextBudget` tool and names it in its effort line, e.g. `Effort: high (new feature) · Context: 300k`. Ask for another size any time.
 - Above `contextCap` (800k) only when you ask; never above the model's window.
-- At 90 % of the budget Claude is told to fill in the handoff. At the end of the turn that passes the budget, the plugin compacts the conversation, keeping the task, its handoff and open questions. The status line shows `ctx 95k/300k`.
-- The plugin can only compact between turns, so Claude Code's own compaction stays as the safety net for one long turn. Don't set `autoCompactWindow` below the cap: Claude Code would compact there before a larger budget is reached.
+- **At 90 % of the budget it's decision time**, checked each time the context grows, so Claude hears it mid-turn:
+  - the task needs the context: Claude raises the budget and carries on, or
+  - otherwise Claude finishes the current step, fills in the handoff, asks for a compaction (`compact: true`) and ends its turn. With `carryOn: true` (the task isn't finished and needs nothing from you) the plugin starts the next turn by itself after compacting, from the handoff; without it, it waits for you.
+- Past the whole budget with no decision, the plugin compacts at the end of the turn and waits for you.
+- At the usage guard's stop stage, nothing resumes by itself.
+- The status line shows `ctx 95k/300k`.
+- A turn runs from your message until Claude's reply ends; the plugin compacts between turns, so Claude Code's own compaction stays as the safety net for one extremely long turn. Don't set `autoCompactWindow` below the cap: Claude Code would compact there before a larger budget is reached.
 
 ## Install
 
