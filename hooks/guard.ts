@@ -40,8 +40,8 @@ function ensureHandoff($: EngineInterface) {
 async function makeHandoff($: EngineInterface) {
   if (!config.handoffFile) return undefined
   try {
-    const dir = await handoffDir($, config.handoffFolder)
-    return await createHandoff($, dir, { account, sessionId: await $.session.id(), usage: usageLines() })
+    const { dir, project } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
+    return await createHandoff($, dir, { account, sessionId: await $.session.id(), project, usage: usageLines() })
   } catch {
     return undefined
   }
@@ -100,6 +100,7 @@ export async function checkAll($: EngineInterface) {
 export async function afterCompact($: EngineInterface) {
   if (!config.guard) return
   const own = handoff ? await handoff : undefined
-  const path = own ?? (await newestHandoff($, await handoffDir($, config.handoffFolder)))
+  const { dir } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
+  const path = own ?? (await newestHandoff($, dir))
   if (path) await send($, `Usage guard: the conversation was just compacted. Read the handoff file ${path} and carry on from there.`)
 }

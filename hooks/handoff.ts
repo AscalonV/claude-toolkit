@@ -1,16 +1,18 @@
 // The handoff file: created by the plugin at the first guard warning, filled in by Claude.
 import type { EngineInterface } from 'claude-code'
 
+import { configDir, homeDir, slash } from './paths'
+
 export type Usage = { label: string; percent: number; resets: string }
 
 export type HandoffInfo = {
   account?: string
   sessionId: string
+  project?: string
   usage: Usage[]
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
-const slash = (p: string) => p.replace(/\\/g, '/')
 const isAbsolute = (p: string) => /^([a-zA-Z]:)?[\\/]/.test(p)
 
 async function git($: EngineInterface, args: string[], cwd: string) {
@@ -22,14 +24,30 @@ async function git($: EngineInterface, args: string[], cwd: string) {
   }
 }
 
-// The project root: the git top level, else the working directory.
-export async function projectRoot($: EngineInterface) {
-  const cwd = await $.session.cwd()
-  return slash((await git($, ['rev-parse', '--show-toplevel'], cwd)) ?? cwd)
+async function isProject($: EngineInterface, dir: string) {
+  return (await $.fs.exists(`${dir}/CLAUDE.md`)) || (await $.fs.exists(`${dir}/.claude`))
 }
 
-export async function handoffDir($: EngineInterface, folder: string) {
-  return isAbsolute(folder) ? slash(folder) : `${await projectRoot($)}/${slash(folder)}`
+// The project: the git top level, else the nearest folder up with a CLAUDE.md or .claude/
+// (not the home folder, which holds ~/.claude). None for a broad task outside a project.
+export async function projectRoot($: EngineInterface) {
+  const cwd = slash(await $.session.cwd())
+  const top = await git($, ['rev-parse', '--show-toplevel'], cwd)
+  if (top) return slash(top)
+  const home = (await homeDir($))?.toLowerCase()
+  for (let dir = cwd; dir && !/^[a-zA-Z]:$/.test(dir); dir = dir.replace(/\/[^/]*$/, '')) {
+    if (dir.toLowerCase() !== home && (await isProject($, dir))) return dir
+  }
+  return undefined
+}
+
+// Where handoffs go: <project>/<folder> in a project, else the outside folder, relative to the
+// Claude config folder (~/.claude/handoffs by default). An absolute path stands as given.
+export async function handoffDir($: EngineInterface, folder: string, outside: string) {
+  const project = await projectRoot($)
+  const pick = project ? folder : outside
+  if (isAbsolute(pick)) return { dir: slash(pick), project }
+  return { dir: `${project ?? (await configDir($))}/${slash(pick)}`, project }
 }
 
 // The newest handoff in the folder, by the date-and-time in its name.
@@ -65,6 +83,7 @@ async function render($: EngineInterface, info: HandoffInfo, now: Date) {
     '',
     `- Account: ${info.account ?? 'unknown'}`,
     `- Session: \`${info.sessionId}\``,
+    `- Project: ${info.project ? `\`${info.project}\`` : 'none (task outside a project)'}`,
     `- Working directory: \`${cwd}\``,
     ...(branch === undefined ? ['- Git: not a repository'] : [`- Git branch: \`${branch || '(detached)'}\``, '- Uncommitted files:', ...changed]),
     ...info.usage.map(u => `- Usage ${u.label}: ${u.percent}%${u.resets}`),

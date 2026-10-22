@@ -1,16 +1,75 @@
 {
   "name": "account-statusline",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Status line (account | effort | context | 5h and weekly usage) plus a usage guard that warns Claude before a limit is hit and starts a handoff file",
   "userConfig": {
-    "guard": { "type": "boolean", "title": "Usage guard", "description": "Warn Claude at the wrap-up and stop thresholds", "default": true },
-    "agentNotes": { "type": "boolean", "title": "Agent notes", "description": "Also send running subagents their own short notes", "default": true },
-    "handoffFile": { "type": "boolean", "title": "Handoff file", "description": "Create a handoff file at the first warning in a session", "default": true },
-    "handoffFolder": { "type": "string", "title": "Handoff folder", "description": "Where handoff files go, relative to the project root (or absolute)", "default": "handoffs" },
-    "fiveHourWrapUp": { "type": "number", "title": "5-hour wrap-up %", "description": "5-hour usage at which Claude wraps up", "default": 75, "min": 1, "max": 100 },
-    "fiveHourStop": { "type": "number", "title": "5-hour stop %", "description": "5-hour usage at which Claude stops", "default": 90, "min": 1, "max": 100 },
-    "weeklyWrapUp": { "type": "number", "title": "Weekly wrap-up %", "description": "Weekly usage at which Claude wraps up", "default": 90, "min": 1, "max": 100 },
-    "weeklyStop": { "type": "number", "title": "Weekly stop %", "description": "Weekly usage at which Claude stops", "default": 97, "min": 1, "max": 100 },
-    "extraNote": { "type": "string", "title": "Extra note", "description": "Text appended to every guard note (optional)", "default": "" }
+    "guard": {
+      "type": "boolean",
+      "title": "Usage guard",
+      "description": "Warn Claude at the wrap-up and stop thresholds",
+      "default": true
+    },
+    "agentNotes": {
+      "type": "boolean",
+      "title": "Agent notes",
+      "description": "Also send running subagents their own short notes",
+      "default": true
+    },
+    "handoffFile": {
+      "type": "boolean",
+      "title": "Handoff file",
+      "description": "Create a handoff file at the first warning in a session",
+      "default": true
+    },
+    "handoffFolder": {
+      "type": "string",
+      "title": "Handoff folder",
+      "description": "Where handoff files go inside a project, relative to the project root (or absolute)",
+      "default": "handoffs"
+    },
+    "outsideProjectFolder": {
+      "type": "string",
+      "title": "Handoff folder outside a project",
+      "description": "Where handoff files go for tasks outside a project, relative to the Claude config folder (or absolute)",
+      "default": "handoffs"
+    },
+    "fiveHourWrapUp": {
+      "type": "number",
+      "title": "5-hour wrap-up %",
+      "description": "5-hour usage at which Claude wraps up",
+      "default": 85,
+      "min": 1,
+      "max": 100
+    },
+    "fiveHourStop": {
+      "type": "number",
+      "title": "5-hour stop %",
+      "description": "5-hour usage at which Claude stops",
+      "default": 90,
+      "min": 1,
+      "max": 100
+    },
+    "weeklyWrapUp": {
+      "type": "number",
+      "title": "Weekly wrap-up %",
+      "description": "Weekly usage at which Claude wraps up",
+      "default": 90,
+      "min": 1,
+      "max": 100
+    },
+    "weeklyStop": {
+      "type": "number",
+      "title": "Weekly stop %",
+      "description": "Weekly usage at which Claude stops",
+      "default": 97,
+      "min": 1,
+      "max": 100
+    },
+    "extraNote": {
+      "type": "string",
+      "title": "Extra note",
+      "description": "Text appended to every guard note (optional)",
+      "default": ""
+    }
   }
 }

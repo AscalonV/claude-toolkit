@@ -6,14 +6,15 @@ const files = new Map<string, string>()
 // The engine hands paths over resolved for this OS (C:\home\t on Windows): compare them as /home/t.
 const norm = (p: string) => p.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
 
-// The world beneath the plugin: a home folder with a login, a project in git, one running agent.
-function world(on: any) {
+// The world beneath the plugin: a home folder with a login, one running agent, and by default
+// a project in git at /proj. Without git, `cwd` is where the session runs.
+function world(on: any, { git = true, cwd = '/proj' } = {}) {
   files.clear()
   files.set('/home/t/.claude.json', JSON.stringify({ oauthAccount: { displayName: 'Alex', accountUuid: 'acct-1' } }))
   mock.env(on, { HOME: '/home/t' })
   mock.clock(on, { now: NOW })
   on('session.id', () => ({ value: 'abcdef12-3456-7890-abcd-ef1234567890' }))
-  on('session.cwd', () => ({ value: '/proj' }))
+  on('session.cwd', () => ({ value: cwd }))
   on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200000 }, rateLimits: [] } }))
   on('settings.read', () => ({ value: { statusLine: { type: 'command', command: 'x' } } }))
   on('fs.read', (_: unknown, e: { path: string }) =>
@@ -23,6 +24,7 @@ function world(on: any) {
   on('fs.list', () => ({ value: [] }))
   on('process.run', (_: unknown, e: { argv: string[] }) => {
     const out: Record<string, string> = { 'rev-parse': '/proj', branch: 'main', status: ' M src/a.ts' }
+    if (!git) return { value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: out[e.argv[1]] ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('agent.list', () => ({ value: [{ id: 'agent-1', description: 'build docs', type: 'general-purpose', status: 'running' }] }))
@@ -49,11 +51,11 @@ test('wrap-up, then stop, each once, for main and the running agent', async ($, 
   await $.session.measure(measure(50) as never)
   expect(session.appended().length).toBe(0)
 
-  await $.session.measure(measure(80) as never)
-  await $.session.measure(measure(81) as never)
+  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(87) as never)
   const wrap = texts(session.appended())
   expect(wrap.length).toBe(2)
-  expect(wrap[0]).toMatch(/^main: Usage guard: 5-hour limit at 80% \(wrap-up at 75%/)
+  expect(wrap[0]).toMatch(/^main: Usage guard: 5-hour limit at 86% \(wrap-up at 85%/)
   expect(wrap[0]).toMatch(/\/proj\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12\.md/)
   expect(wrap[1]).toMatch(/^agent-1: .*update your notes file/)
 
@@ -77,10 +79,10 @@ test('after /login, the old account numbers are ignored until a fresh reading', 
   await $.session.measure(measure(10) as never)
 
   files.set('/home/t/.claude.json', JSON.stringify({ oauthAccount: { displayName: 'Sam', accountUuid: 'acct-2' } }))
-  await $.session.measure(measure(80, ['context']) as never)
+  await $.session.measure(measure(86, ['context']) as never)
   expect(session.appended().length).toBe(0)
 
-  await $.session.measure(measure(80) as never)
+  await $.session.measure(measure(86) as never)
   expect(texts(session.appended())[0]).toMatch(/^main: Usage guard/)
 })
 
@@ -90,14 +92,33 @@ test('a bad threshold falls back to the default with one notice', { options: { f
   const notices = session.appended().filter(r => r.message.type === 'system')
   expect(notices.length).toBe(1)
 
-  await $.session.measure(measure(76) as never)
-  expect(texts(session.appended()).some(t => /wrap-up at 75%/.test(t))).toBe(true)
+  await $.session.measure(measure(86) as never)
+  expect(texts(session.appended()).some(t => /wrap-up at 85%/.test(t))).toBe(true)
 })
 
 test('after compaction, Claude is pointed at the handoff', async ($, on) => {
   const session = world(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  await $.session.measure(measure(80) as never)
+  await $.session.measure(measure(86) as never)
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
   expect(texts(session.appended()).pop()).toMatch(/^main: .*compacted\. Read the handoff file \/proj\/handoffs\/.*abcdef12\.md/)
+})
+
+test('a broad task outside any project keeps its handoff in the config folder', async ($, on) => {
+  const session = world(on, { git: false, cwd: '/home/t' })
+  files.set('/home/t/.claude', '') // ~/.claude exists, but it doesn't make the home folder a project
+  await $.session.start({ cwd: '/home/t', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(86) as never)
+  expect(texts(session.appended())[0]).toMatch(/\/home\/t\/\.claude\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12\.md/)
+  const handoff = [...files.keys()].find(p => p.startsWith('/home/t/.claude/handoffs/'))!
+  expect(files.get(handoff)).toMatch(/Project: none \(task outside a project\)/)
+  expect(files.get(handoff)).toMatch(/Git: not a repository/)
+})
+
+test('a project without git is found by its CLAUDE.md, from a subfolder', async ($, on) => {
+  const session = world(on, { git: false, cwd: '/work/notes/sub' })
+  files.set('/work/notes/CLAUDE.md', '# notes')
+  await $.session.start({ cwd: '/work/notes/sub', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(86) as never)
+  expect(texts(session.appended())[0]).toMatch(/\/work\/notes\/handoffs\//)
 })

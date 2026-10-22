@@ -10,6 +10,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import { readConfig } from './config'
+import { configDir, homeDir } from './paths'
 import { afterCompact, check, checkAll, setConfig, setUsage } from './guard'
 import type { Window } from './guard'
 
@@ -45,18 +46,10 @@ function line() {
   return parts.join(' | ')
 }
 
-// ~/.claude (or CLAUDE_CONFIG_DIR), with forward slashes so the path works in the status command.
-async function configDir($: EngineInterface) {
-  const dir = await $.env.get('CLAUDE_CONFIG_DIR')
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-  const path = dir ?? (home ? `${home}/.claude` : undefined)
-  return path?.replace(/\\/g, '/')
-}
-
 // The account isn't exposed to plugins, so read it from the login record in .claude.json.
 async function readAccount($: EngineInterface): Promise<{ name?: string; id?: string }> {
   const dir = await $.env.get('CLAUDE_CONFIG_DIR')
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  const home = await homeDir($)
   const path = dir ? `${dir}/.claude.json` : home ? `${home}/.claude.json` : undefined
   if (!path) return {}
   try {
