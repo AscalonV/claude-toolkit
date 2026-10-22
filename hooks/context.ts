@@ -57,8 +57,10 @@ export async function measureLimit($: EngineInterface) {
     const { context: c } = await $.session.usage({ breakdown: 'summary' })
     const next = c.breakdown?.autoCompactThreshold ?? c.window ?? 0
     if (next && next !== limit) {
-      if (limit) step = 0
+      // Only a move of the size the notes count against starts them over (not one above the budget).
+      const was = limit ? effective() : 0
       limit = next
+      if (was && was !== effective()) step = 0
     }
   } catch {}
 }
@@ -197,15 +199,30 @@ export async function beforeRequest($: EngineInterface) {
 }
 
 const CONTINUE =
-  'Continue the task: the conversation was compacted, as you asked to stay within the context budget. Read the handoff file the usage guard note above names (if none is named, go on from the summary), set the context budget for the rest of the task, and carry on where you stopped.'
+  'Continue the task: the conversation was compacted, as you asked to stay within the context budget. Read the handoff file the note above names (if none is named, go on from the summary), set the context budget for the rest of the task, and carry on where you stopped.'
 
 const MOVED = `Context budget: the compaction you asked for did not run, because a new turn (the user's message) started first. Answer the user. The plugin compacts at the end of this turn and then waits for the user. If the task should still resume by itself afterwards (the user's message doesn't change it), call ${TOOL} again with compact: true and carryOn: true; if the task needs the context, raise the budget instead.`
 
 const RESUME =
-  'Context budget: the conversation was just compacted and the task was set to resume by itself, but the user wrote first. Answer them, then carry on with the task from the handoff file the usage guard note names (or the summary) unless their message changes it.'
+  'Context budget: the conversation was just compacted and the task was set to resume by itself, but the user wrote first. Answer them, then carry on with the task from the handoff file the note above names (or the summary) unless their message changes it.'
+
+// A turn the user's message did not start (a background task's notification, a schedule, another
+// session): the compaction keeps what Claude asked for and runs at that turn's end.
+const notUser = (resumes: boolean) =>
+  `Context budget: the compaction you asked for did not run yet, because a notification (a background task, a schedule or another session) started a new turn first. Deal with it briefly and end your turn: the plugin compacts at the end of this turn${resumes ? ' and the task then resumes by itself' : ' and then waits for the user'}.`
 
 // A main-loop turn ended (also an interrupted one).
 export const turnEnded = () => (turnRunning = false)
+
+// The prompts since the last main turn started: the user's, and others'. A turn only others led to
+// is not the user stepping in; one with no prompt seen counts as the user's, as before.
+let prompts = { user: false, other: false }
+let turnByUser = true
+
+export function promptSubmitted(e: PromptSubmitInput) {
+  if (USER.includes(e.origin?.kind)) prompts.user = true
+  else prompts.other = true
+}
 
 const ABORTED = `Context budget: the turn that asked for the compaction was interrupted. The compaction now runs at the end of the next turn, and the task does not resume by itself afterwards. If it still should (the user's message doesn't change it), call ${TOOL} again with compact: true and carryOn: true.`
 
@@ -264,8 +281,10 @@ async function compactNow($: EngineInterface, carryOn: boolean) {
   }
 }
 
-// A turn started before the compaction ran: it waits for this turn's end, and Claude hears why.
+// A turn started before the compaction ran: it waits for this turn's end, and Claude hears why. Only
+// the user's message stops the task from resuming by itself.
 async function moved($: EngineInterface) {
+  if (!turnByUser) return note($, notUser(Boolean(pending?.carryOn) && !atStop()))
   pending = { carryOn: false }
   await save($)
   await note($, MOVED)
@@ -285,6 +304,8 @@ async function failed($: EngineInterface, err: unknown) {
 // A main-loop turn starts (the user's queued message, say) while a compaction waits for its slot.
 export async function turnStarted($: EngineInterface) {
   turnRunning = true
+  turnByUser = prompts.user || !prompts.other
+  prompts = { user: false, other: false }
   if (!due) return
   due.cancel()
   due = undefined

@@ -23,6 +23,7 @@ import {
   rules as budgetRules,
   duringCompaction,
   measureLimit,
+  promptSubmitted,
   resetBudget,
   restoreBudget,
   setBudget,
@@ -198,8 +199,12 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // A message of the user's while a compaction runs goes before the "continue" prompt.
-  on('prompt.submit', async ($, e, next) => next(duringCompaction(e)))
+  // A message of the user's while a compaction runs goes before the "continue" prompt; where the
+  // prompt came from tells a turn the user started from a notification's.
+  on('prompt.submit', async ($, e, next) => {
+    promptSubmitted(e)
+    return next(duringCompaction(e))
+  })
 
   // turn.step streams, so its hook is an async generator that forwards the stream.
   on('turn.step', async function* ($, e, next) {

@@ -98,7 +98,15 @@ async function makeHandoff($: EngineInterface) {
   try {
     const { dir, project } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
     const sessionId = await $.session.id()
-    return (fresh ? undefined : await newestHandoff($, dir, sessionId)) ?? (await createHandoff($, dir, { account, sessionId, project, usage: usageLines() }))
+    const own = fresh ? undefined : await newestHandoff($, dir, sessionId)
+    if (own) return own
+    const path = await createHandoff($, dir, { account, sessionId, project, usage: usageLines() })
+    // The new task's draft is now the session's newest: a reload goes on with it.
+    if (path && fresh) {
+      fresh = false
+      await save($)
+    }
+    return path
   } catch {
     return undefined
   }
@@ -171,10 +179,12 @@ export async function knownHandoff($: EngineInterface) {
 }
 
 // After the main conversation is compacted: point Claude at this session's handoff, if it has one.
+// The context budget relies on it too, so it also comes with the guard off.
 export async function afterCompact($: EngineInterface) {
-  if (!config.guard) return
+  if (!config.guard && !config.contextBudget) return
   const path = await knownHandoff($).catch(() => undefined)
-  if (path) await send($, `Usage guard: the conversation was just compacted. Read the handoff file ${path} and carry on from there.`)
+  const who = config.guard ? 'Usage guard' : 'Context budget'
+  if (path) await send($, `${who}: the conversation was just compacted. Read the handoff file ${path} and carry on from there.`)
 }
 
 // True once a limit reached its stop stage: nothing should then start work by itself.

@@ -757,3 +757,89 @@ test('at the stop stage, compact with carryOn says the user is waited for', asyn
   expect(compactedWith).toMatch(/^Compaction Claude asked for at 185k of the 200k context budget\./)
   expect(submitted.length).toBe(0)
 })
+
+test("a notification that starts a turn first (an agent done, a schedule) is not the user: the compaction runs at that turn's end and the task still resumes", async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 185000
+  await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
+  await turnEnd($)
+  await $.prompt.submit({ text: '<task-notification>agent done</task-notification>', origin: { kind: 'task-notification' } } as never)
+  await turnStart($)
+  await clock.advance(1000)
+  expect(compactedWith).toBe(undefined)
+  expect(texts(session.appended()).pop()).toMatch(/^main: Context budget: .*a notification .* started a new turn first\..*the task then resumes by itself/)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget/)
+  expect(submitted.filter(t => /^Continue the task/.test(t)).length).toBe(1)
+})
+
+test('a message the user typed still moves the compaction and stops the task from resuming by itself', async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 185000
+  await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
+  await turnEnd($)
+  await $.prompt.submit({ text: '<task-notification>agent done</task-notification>', origin: { kind: 'task-notification' } } as never)
+  await $.prompt.submit({ text: 'wait, one more thing', origin: { kind: 'composer' } } as never)
+  await turnStart($)
+  await clock.advance(1000)
+  expect(texts(session.appended()).pop()).toMatch(/because a new turn \(the user's message\) started first/)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toMatch(/asked for at/)
+  expect(submitted.filter(t => /^Continue the task/.test(t)).length).toBe(0)
+})
+
+// Two runs of the module, as across a reload: the first keeps what it wrote to $.state.
+let beforeReload: Record<string, any> = {}
+test('handoff "none", then a warning: a new draft for the new task (before a reload)', async ($, on) => {
+  budgetWorld(on)
+  beforeReload = {}
+  on('state.set', (_: unknown, e: { key: string; value: unknown }) => ((beforeReload[e.key] = e.value), { value: { isSet: true, version: 1 } }))
+  files.set('/proj/handoffs/2026-10-22-0900-abcdef12.md', '# the task before')
+  await start($, 200000)
+  await $.tool.call({ tool: budgetTool, reason: 'new task', handoff: 'none' } as never)
+  await $.session.measure(measure(86) as never)
+  beforeReload.files = [...files.keys()].filter(p => p.startsWith('/proj/handoffs/')).sort()
+  expect(beforeReload.files.length).toBe(2)
+})
+
+test('after a reload, the new task\'s draft goes on: no third file, and the compaction names it', async ($, on) => {
+  const { session } = budgetWorld(on)
+  for (const f of beforeReload.files) files.set(f, '# draft')
+  on('state.get', (_: unknown, e: { key: string }) => ({ value: { value: beforeReload[e.key], version: 1 } }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' } as never)
+  await $.session.measure(measure(92) as never)
+  const draft = beforeReload.files.find((f: string) => !f.includes('-0900-'))
+  expect(texts(session.appended()).find(t => /^main: .*stop at 90%/.test(t))).toContain(draft)
+  expect([...files.keys()].filter(p => p.startsWith('/proj/handoffs/')).length).toBe(2)
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
+  expect(texts(session.appended()).pop()).toContain(draft)
+})
+
+test('with the guard off, the compaction still points at the handoff named to ContextBudget', { options: { guard: false } }, async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 185000
+  await $.tool.call({ tool: budgetTool, reason: 'done', handoff: '/proj/handoffs/task.md', compact: true, carryOn: true } as never)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(texts(session.appended()).pop()).toMatch(/^main: Context budget: the conversation was just compacted\. Read the handoff file \/proj\/handoffs\/task\.md/)
+  expect(submitted).toEqual([expect.stringMatching(/^Continue the task/)])
+})
+
+test("Claude Code's compaction point moving above the budget sends no second note", async ($, on) => {
+  const { session } = budgetWorld(on)
+  compactAt = 967000
+  await start($, 200000)
+  ctxNow = 185000
+  await $.session.measure(measure(10) as never)
+  compactAt = undefined // auto-compact off in /config: the window stands in
+  await $.session.measure(measure(10) as never)
+  compactAt = 967000
+  await $.session.measure(measure(10) as never)
+  expect(texts(session.appended()).filter(t => /Context budget: 185k/.test(t)).length).toBe(1)
+})
