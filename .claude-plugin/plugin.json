@@ -1,6 +1,6 @@
 {
   "name": "toolkit",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, and per-turn effort skills",
   "userConfig": {
     "effortRules": {

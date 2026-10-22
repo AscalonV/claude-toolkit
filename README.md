@@ -119,6 +119,8 @@ The plugin ships four skills, `toolkit:effort-low`, `-medium`, `-high` and `-xhi
 | high | new features, bugs with an unknown cause, multi-file changes, reviewing test feedback |
 | xhigh | architecture or design decisions, tricky performance or concurrency work, a second try after a failed fix |
 
+A project can bring its own, more tailored effort skills: an `effort-<level>` skill in `.claude/skills/` of the working directory or the project root. The rules then name the project's skill for that level instead of `toolkit:effort-<level>`, and tell Claude to use it. Levels the project doesn't cover keep the plugin's skill.
+
 Turn the rules off with the `effortRules` setting; the skills stay available either way.
 
 ## Install

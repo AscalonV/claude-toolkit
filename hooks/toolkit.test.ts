@@ -142,3 +142,14 @@ test('a status line from before the rename is replaced', async ($, on) => {
   expect(settings.model).toBe('opus')
   expect(settings.statusLine.command).toMatch(/\/home\/t\/\.claude\/toolkit\.tsv/)
 })
+
+test('a project with its own effort skills gets those named instead', async ($, on) => {
+  world(on)
+  files.set('/proj/.claude/skills/effort-low/SKILL.md', '---\nname: effort-low\n---')
+  files.set('/proj/.claude/skills/effort-xhigh/SKILL.md', '---\nname: effort-xhigh\n---')
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
+  const { sections } = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] })
+  const text = sections[sections.length - 1].text
+  expect(text).toMatch(/effort-low, toolkit:effort-medium, toolkit:effort-high, effort-xhigh skills/)
+  expect(text).toMatch(/This project has its own effort-low, effort-xhigh: use them/)
+})
