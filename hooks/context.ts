@@ -214,14 +214,17 @@ const notUser = (resumes: boolean) =>
 // A main-loop turn ended (also an interrupted one).
 export const turnEnded = () => (turnRunning = false)
 
-// The prompts since the last main turn started: the user's, and others'. A turn only others led to
-// is not the user stepping in; one with no prompt seen counts as the user's, as before.
-let prompts = { user: false, other: false }
+// The prompts since the last main turn started: the user's texts (a slash command of theirs as
+// `command`), and whether others came. With others among them, a turn is the user's only when it
+// starts with one of their texts: a message of theirs delivered into the running turn was answered
+// there, and the next turn may be a notification's. With no other prompt seen it counts as theirs.
+let prompts = { user: [] as string[], command: false, other: false }
 let turnByUser = true
 
 export function promptSubmitted(e: PromptSubmitInput) {
-  if (USER.includes(e.origin?.kind)) prompts.user = true
-  else prompts.other = true
+  if (!USER.includes(e.origin?.kind)) prompts.other = true
+  else if (e.command) prompts.command = true // the turn's text is the command's, not the line typed
+  else prompts.user.push(e.text.trim())
 }
 
 const ABORTED = `Context budget: the turn that asked for the compaction was interrupted. The compaction now runs at the end of the next turn, and the task does not resume by itself afterwards. If it still should (the user's message doesn't change it), call ${TOOL} again with compact: true and carryOn: true.`
@@ -302,10 +305,10 @@ async function failed($: EngineInterface, err: unknown) {
 }
 
 // A main-loop turn starts (the user's queued message, say) while a compaction waits for its slot.
-export async function turnStarted($: EngineInterface) {
+export async function turnStarted($: EngineInterface, text: string) {
   turnRunning = true
-  turnByUser = prompts.user || !prompts.other
-  prompts = { user: false, other: false }
+  turnByUser = !prompts.other || prompts.command || prompts.user.includes(text.trim())
+  prompts = { user: [], command: false, other: false }
   if (!due) return
   due.cancel()
   due = undefined

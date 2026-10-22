@@ -783,7 +783,7 @@ test('a message the user typed still moves the compaction and stops the task fro
   await turnEnd($)
   await $.prompt.submit({ text: '<task-notification>agent done</task-notification>', origin: { kind: 'task-notification' } } as never)
   await $.prompt.submit({ text: 'wait, one more thing', origin: { kind: 'composer' } } as never)
-  await turnStart($)
+  await $.turn.start({ text: 'wait, one more thing', turnId: 't2' } as never)
   await clock.advance(1000)
   expect(texts(session.appended()).pop()).toMatch(/because a new turn \(the user's message\) started first/)
   await turnEnd($)
@@ -842,4 +842,36 @@ test("Claude Code's compaction point moving above the budget sends no second not
   compactAt = 967000
   await $.session.measure(measure(10) as never)
   expect(texts(session.appended()).filter(t => /Context budget: 185k/.test(t)).length).toBe(1)
+})
+
+test("a message of the user's delivered into the turn was answered there: a notification's turn after it is still not the user's", async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
+  await $.prompt.submit({ text: '114.6 ok', origin: { kind: 'composer' }, turnId: 't0' } as never) // delivered into t0
+  ctxNow = 185000
+  await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
+  await turnEnd($)
+  await $.prompt.submit({ text: '<task-notification>agent done</task-notification>', origin: { kind: 'task-notification' } } as never)
+  await $.turn.start({ text: '<task-notification>agent done</task-notification>', turnId: 't2' } as never)
+  await clock.advance(1000)
+  expect(texts(session.appended()).pop()).toMatch(/a notification .* started a new turn first\..*the task then resumes by itself/)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(submitted.filter(t => /^Continue the task/.test(t)).length).toBe(1)
+})
+
+test("a slash command of the user's beside a notification still counts as the user stepping in", async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 185000
+  await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
+  await turnEnd($)
+  await $.prompt.submit({ text: '<task-notification>agent done</task-notification>', origin: { kind: 'task-notification' } } as never)
+  await $.prompt.submit({ text: '/idea a new spell', command: { name: 'idea', args: 'a new spell' }, origin: { kind: 'composer' } } as never)
+  await $.turn.start({ text: 'Note the idea: a new spell', turnId: 't2' } as never)
+  await clock.advance(1000)
+  expect(texts(session.appended()).pop()).toMatch(/because a new turn \(the user's message\) started first/)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(submitted.filter(t => /^Continue the task/.test(t)).length).toBe(0)
 })

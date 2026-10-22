@@ -193,7 +193,7 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     if (!e.agentId) {
       mainTurnStarted()
-      await turnStarted($)
+      await turnStarted($, e.text)
       await check($)
     }
     return next(e)
