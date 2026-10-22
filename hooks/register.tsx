@@ -13,10 +13,24 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { agentRules, agentUseRules, withRules } from './agents'
 import { readConfig } from './config'
-import { TOOL, afterCompaction, afterTurn, beforeRequest, currentBudget, rules as budgetRules, setBudget, setFromTool, toolSpec } from './context'
-import { effortRules } from './effort'
+import {
+  TOOL,
+  afterCompaction,
+  afterTurn,
+  beforeRequest,
+  compacting,
+  currentBudget,
+  rules as budgetRules,
+  duringCompaction,
+  restoreBudget,
+  setBudget,
+  setFromTool,
+  toolSpec,
+  turnStarted,
+} from './context'
+import { defaultLevel, effortRules } from './effort'
 import { configDir, homeDir } from './paths'
-import { afterCompact, atStop, check, checkAll, setConfig, setUsage } from './guard'
+import { afterCompact, atStop, check, checkAll, mainTurnStarted, restoreGuard, setConfig, setUsage } from './guard'
 import type { Window } from './guard'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -140,8 +154,7 @@ const load = ($: EngineInterface) =>
     const acct = await readAccount($)
     name = acct.name
     accountId = acct.id
-    const level = await $.settings.read({ key: 'effortLevel' })
-    if (typeof level === 'string') effort ??= level
+    effort ??= await defaultLevel($)
     const usage = await $.session.usage()
     ctx ??= usage.context.tokens
     if (!limits.length) await takeReading($, usage.rateLimits, false)
@@ -155,6 +168,9 @@ export const register: Register = (on, options) => {
   setBudget(config.contextBudget, config.contextCap)
 
   on('session.start', async ($, e, next) => {
+    // A hot reload starts the module over: what Claude set and the guard sent are in $.state.
+    await restoreGuard($)
+    await restoreBudget($)
     await load($)
     if (config.contextBudget) await $.tool.register(toolSpec)
     if (bad.length) {
@@ -164,8 +180,23 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // A main turn: a compaction still waiting for its slot moves to this turn's end; the guard's
+  // notes for the main chat start with its first turn.
+  on('turn.start', async ($, e, next) => {
+    if (!e.agentId) {
+      mainTurnStarted()
+      await turnStarted($)
+      await check($)
+    }
+    return next(e)
+  })
+
+  // A message of the user's while a compaction runs goes before the "continue" prompt.
+  on('prompt.submit', async ($, e, next) => next(duringCompaction(e)))
+
   // turn.step streams, so its hook is an async generator that forwards the stream.
   on('turn.step', async function* ($, e, next) {
+    if (!e.agentId) mainTurnStarted()
     if (e.effort !== undefined && !e.agentId) {
       effort = String(e.effort)
       await draw($)
@@ -208,7 +239,7 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     const sections = [...result.sections]
     if (config.effortRules) {
-      sections.push({ id: `${$.plugin.name}:effort`, text: await effortRules($, config.agentUse), scope: 'session' as const })
+      sections.push({ id: `${$.plugin.name}:effort`, text: await effortRules($, config.agentUse, e.model), scope: 'session' as const })
     }
     // Only where the model can start agents: the main chat, not the agents themselves.
     if (config.agentUse && e.tools.includes('Agent')) {
@@ -220,10 +251,12 @@ export const register: Register = (on, options) => {
     return { sections }
   })
 
+  // A precompute only prepares a summary for later: the conversation stays as it is. The plugin's
+  // own compaction (should this hook hear it) is followed up where it is made.
   on('session.compact', async ($, e, next) => {
     const result = await next(e)
-    if (!e.agentId && result.messages) {
-      afterCompaction()
+    if (!e.agentId && e.trigger !== 'precompute' && !compacting() && result.messages) {
+      await afterCompaction($)
       await afterCompact($)
     }
     return result

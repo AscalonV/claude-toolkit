@@ -17,9 +17,27 @@ async function skillName($: EngineInterface, level: string, dirs: string[]) {
   return `${$.plugin.name}:effort-${level}`
 }
 
-export async function effortRules($: EngineInterface, agentUse = false) {
+const valid = (v: unknown): v is string => typeof v === 'string' && LEVELS.includes(v)
+
+// The effort the person set: per model (`modelSettings`, where /effort keeps it), else the plain
+// `effortLevel`. Without a model (before the first request) a per-model level counts when all agree.
+export async function defaultLevel($: EngineInterface, model?: string) {
+  const perModel = (await $.settings.read({ key: 'modelSettings' })) as Record<string, { effortLevel?: unknown } | undefined> | undefined
+  const levels = Object.entries(perModel ?? {})
+  if (model) {
+    const ids = [model, model.replace(/\[.*\]$/, '')]
+    const hit = levels.find(([id, s]) => ids.includes(id) && valid(s?.effortLevel))
+    if (hit) return hit[1]!.effortLevel as string
+  } else {
+    const all = [...new Set(levels.map(([, s]) => s?.effortLevel).filter(valid))]
+    if (all.length === 1) return all[0]
+  }
   const set = await $.settings.read({ key: 'effortLevel' })
-  const level = typeof set === 'string' && LEVELS.includes(set) ? set : 'high'
+  return valid(set) ? set : undefined
+}
+
+export async function effortRules($: EngineInterface, agentUse = false, model?: string) {
+  const level = (await defaultLevel($, model)) ?? 'high'
   const project = await projectRoot($)
   const dirs = [slash(await $.session.cwd()), ...(project ? [project] : [])]
   const names = await Promise.all(SKILLS.map(l => skillName($, l, dirs)))

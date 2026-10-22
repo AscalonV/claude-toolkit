@@ -1,7 +1,10 @@
 // Usage guard: two stages per limit window (wrap-up, stop), each sent once per window, session
-// and loop (main or one agent) as a user-role note the model reads on its next request.
+// and loop (main or one agent) as a user-role note the model reads on its next request. The main
+// chat gets its notes (and its draft handoff) once it has started a turn, so a session opened and
+// closed unused leaves no file. What was sent and the task's handoff are kept in $.state.
 import type { EngineInterface } from 'claude-code'
 
+import type { ToolkitGuard } from '../types'
 import { DEFAULTS } from './config'
 import type { Config, Stage } from './config'
 import { createHandoff, handoffDir, newestHandoff } from './handoff'
@@ -19,22 +22,45 @@ const warned = new Set<string>()
 let handoff: Promise<string | undefined> | undefined
 // The task's own handoff file, named by Claude (ContextBudget `handoff`): it wins over the draft.
 let taskHandoff: string | undefined
+let mainTurn = false // the main chat started a turn (since the last load)
+const STATE = { plugin: 'toolkit', key: 'guard' } as const
 
 export const setConfig = (c: Config) => (config = c)
 export const setUsage = (w: Window[], name: string | undefined) => ((windows = w), (account = name))
-export const setTaskHandoff = (path: string) => (taskHandoff = path)
 export const taskHandoffPath = () => taskHandoff
+export const mainTurnStarted = () => (mainTurn = true)
+
+async function save($: EngineInterface) {
+  const value: ToolkitGuard = { warned: [...warned], ...(taskHandoff ? { taskHandoff } : {}) }
+  await $.state.set(STATE, value).catch(() => {})
+}
+
+export async function setTaskHandoff($: EngineInterface, path: string) {
+  taskHandoff = path
+  await save($)
+}
+
+// After a hot reload: the notes already sent and the task's handoff.
+export async function restoreGuard($: EngineInterface) {
+  const { value } = await $.state.get(STATE).catch(() => ({ value: undefined }))
+  if (!value) return
+  for (const key of value.warned) warned.add(key)
+  taskHandoff ??= value.taskHandoff
+}
 
 function resets(iso: string | undefined) {
   if (!iso) return ''
   const t = new Date(iso)
-  return isNaN(t.getTime()) ? '' : ` (resets ${t.getMonth() + 1}/${t.getDate()} ${pad(t.getHours())}:${pad(t.getMinutes())})`
+  return isNaN(t.getTime()) ? '' : `resets ${t.getMonth() + 1}/${t.getDate()} ${pad(t.getHours())}:${pad(t.getMinutes())}`
 }
 
 const usageLines = (): Usage[] =>
   windows
     .filter(w => LABELS[w.kind])
-    .map(w => ({ label: LABELS[w.kind], percent: Math.round(w.percentUsed), resets: resets(w.resetsAt) }))
+    .map(w => {
+      const r = resets(w.resetsAt)
+      return { label: LABELS[w.kind], percent: Math.round(w.percentUsed), resets: r ? ` (${r})` : '' }
+    })
 
 // This session's handoff: the task's own file when Claude named one, else the draft it already has
 // (from before a reload or restart), else a new draft created on first use.
@@ -55,7 +81,8 @@ async function makeHandoff($: EngineInterface) {
 
 function note(stage: Stage, w: Window, isAgent: boolean, path: string | undefined) {
   const limit = config.thresholds[w.kind as keyof Config['thresholds']][stage]
-  const head = `Usage guard: ${LABELS[w.kind]} limit at ${Math.round(w.percentUsed)}% (${stage === 'stop' ? 'stop' : 'wrap-up'} at ${limit}%${resets(w.resetsAt)}).`
+  const r = resets(w.resetsAt)
+  const head = `Usage guard: ${LABELS[w.kind]} limit at ${Math.round(w.percentUsed)}% (${stage === 'stop' ? 'stop' : 'wrap-up'} at ${limit}%${r ? `, ${r}` : ''}).`
   const file = path ? `the handoff file ${path}` : 'a handoff note'
   // A plugin draft: Claude either fills it in (and marks it open) or uses the task's own file.
   const draft =
@@ -80,7 +107,7 @@ async function send($: EngineInterface, text: string, agentId?: string) {
 
 // Sends what this loop is due: per window, the highest stage reached and not yet sent.
 export async function check($: EngineInterface, agentId?: string) {
-  if (!config.guard || (agentId && !config.agentNotes)) return
+  if (!config.guard || (agentId ? !config.agentNotes : !mainTurn)) return
   const session = await $.session.id()
   for (const w of windows) {
     const t = config.thresholds[w.kind as keyof Config['thresholds']]
@@ -91,6 +118,7 @@ export async function check($: EngineInterface, agentId?: string) {
     if (warned.has(key(stage))) continue
     warned.add(key('wrapUp')) // a stop note covers wrap-up too
     warned.add(key(stage))
+    await save($)
     const path = agentId ? undefined : await ensureHandoff($)
     await send($, note(stage, w, Boolean(agentId), path), agentId)
   }

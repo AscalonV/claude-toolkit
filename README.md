@@ -39,18 +39,18 @@ The guard watches the same 5-hour and weekly numbers. Each limit has two stages:
 | 5-hour | 85 % | 90 % |
 | Weekly | 90 % | 97 % |
 
-When a stage is reached, the plugin adds a note to Claude's next request (context for Claude, not a popup). Each stage is sent once per limit window, session and agent.
+When a stage is reached, the plugin adds a note to Claude's next request (context for Claude, not a popup). Each stage is sent once per limit window, session and agent, also across a plugin reload or update. The main chat gets its notes once it has started a turn, so a session opened and closed without a message gets no note and leaves no handoff file.
 
 - **Wrap-up:** finish the current step, fill in the handoff file, tell running agents to update their notes, then go on without starting large new work.
 - **Stop:** start no new work, tell agents to stop, leave the repo buildable and write final notes, fold the notes into the handoff file, then tell you in one line that the handoff is ready.
 - **Subagents** get their own shorter note in their own conversation.
-- **After compaction**, Claude is told to read this session's handoff file: the task's own file when Claude named one, else the session's draft. It never points to another session's file, which belongs to another task; with neither, Claude goes on from the compaction summary.
+- **After compaction** (the context budget's, `/compact` or Claude Code's own; not a summary Claude Code only prepares in advance), Claude is told to read this session's handoff file: the task's own file when Claude named one, else the session's draft. It never points to another session's file, which belongs to another task; with neither, Claude goes on from the compaction summary.
 
 ### Handoff file
 
 **The task's own file wins.** When a task already has a handoff (written the project's way, or the one a new chat continues from), Claude names it with `ContextBudget` (`handoff: "<path>"`), and the guard notes and the compaction point to it instead of a draft.
 
-Otherwise, at the first warning in a session, the plugin creates a draft `<YYYY-MM-DD>-<HHMM>-<session id, 8 chars>.md`. Where it goes depends on whether the session runs in a project:
+Otherwise, at the first warning in a session (once the main chat has started a turn), the plugin creates a draft `<YYYY-MM-DD>-<HHMM>-<session id, 8 chars>.md`. Where it goes depends on whether the session runs in a project:
 
 - **In a project:** `<project>/handoffs/`. The project is the git top level, or else the nearest folder up from the working directory that has a `CLAUDE.md` or `.claude/` folder. Your home folder doesn't count, even though it holds `~/.claude`.
 - **Outside a project** (a broad task, for example started in your home folder): `~/.claude/handoffs/`, or `CLAUDE_CONFIG_DIR/handoffs/`.
@@ -118,7 +118,7 @@ A value that isn't valid (not a number from 1 to 100, wrap-up not below stop, an
 
 The plugin ships four skills, `toolkit:effort-low`, `-medium`, `-high` and `-xhigh`. Each one sets Claude's thinking effort for the rest of the turn. The plugin also adds these rules to Claude's instructions:
 
-- The default is your session's effort setting (`high` if none is set). For a turn with tool work, Claude picks a level from the skill descriptions and, if it differs from the default, invokes that skill in the same message as its first tool call. A turn without tool calls doesn't switch.
+- The default is your effort setting: the one `/effort` keeps for the current model (`modelSettings`), else a plain `effortLevel`, else `high`. For a turn with tool work, Claude picks a level from the skill descriptions and, if it differs from the default, invokes that skill in the same message as its first tool call. A turn without tool calls doesn't switch.
 - Claude names the level in one line of every reply, e.g. `Effort: low (bookkeeping)`. You override it with `/effort`.
 - When unsure, Claude keeps the default. `max` only when you ask for it.
 - Subagents for searching or exploring run at `effort: low`.
@@ -170,7 +170,9 @@ Every request sends the whole conversation, so a long chat costs more with every
 - A new budget gets its own 90 % note, also when the context is already past 90 % of it.
 - Past the whole budget with no decision, the plugin compacts at the end of the turn and waits for you.
 - At the usage guard's stop stage, nothing resumes by itself.
-- The status line shows `ctx 95k/300k`.
+- **Your messages come first.** A queued message that starts a turn before the compaction runs moves it to the end of that turn, and Claude is told: it answers you, and asks again with `carryOn` if the task should still resume afterwards (otherwise the plugin waits for you). A message you type while the compaction runs goes before the plugin's "continue" prompt, which is then not sent; Claude reads beside your message that the task was meant to resume, and carries on unless your message changes it.
+- The budget Claude set, a compaction it asked for and the task's handoff file survive a plugin reload or update (`$.state`); a new process (`claude --resume`) starts from the default again.
+- The status line shows `ctx 95k/300k`. The rules in Claude's instructions name the default from the settings, so they read the same whatever budget is set.
 - A turn runs from your message until Claude's reply ends; the plugin compacts between turns, so Claude Code's own compaction stays as the safety net for one extremely long turn. Don't set `autoCompactWindow` below the cap: Claude Code would compact there before a larger budget is reached.
 
 ## Install
