@@ -11,6 +11,7 @@ let compactAt: number | undefined // where Claude Code compacts on its own (brea
 let clock: any
 let compactedWith: string | undefined // the instructions of the last compaction
 let refuseCompact = false // the next compaction is refused, as when a turn started first
+let vetoCompact = false // the next compactions are vetoed, as by a PreCompact hook
 let holdCompact: Promise<void> | undefined // a compaction waits for this, so a prompt can come meanwhile
 // The engine hands paths over resolved for this OS (C:\home\t on Windows): compare them as /home/t.
 const norm = (p: string) => p.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
@@ -27,6 +28,7 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
   compactAt = undefined
   compactedWith = undefined
   refuseCompact = false
+  vetoCompact = false
   holdCompact = undefined
   clock = mock.clock(on, { now: NOW })
   on('tool.register', () => ({ value: undefined }))
@@ -63,6 +65,7 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
       throw new Error('a turn is running')
     }
     if (e.trigger !== 'precompute' && holdCompact) await holdCompact
+    if (e.trigger !== 'precompute' && vetoCompact) return { skip: 'a PreCompact hook blocked it' }
     compactedWith = e.instructions ?? ''
     return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] }
   })
@@ -874,4 +877,28 @@ test("a slash command of the user's beside a notification still counts as the us
   await turnEnd($)
   await clock.advance(1000)
   expect(submitted.filter(t => /^Continue the task/.test(t)).length).toBe(0)
+})
+
+test('a vetoed compaction is said to Claude once, with the reason; the task does not resume by itself', async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 185000
+  await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
+  vetoCompact = true
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(submitted.length).toBe(0)
+  expect(texts(session.appended()).pop()).toMatch(/^main: Context budget: the compaction you asked for could not run \(a PreCompact hook blocked it\)/)
+  await turnStart($)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toBe(undefined)
+})
+
+test('the budget rules read sensibly with a cap below 500k', { options: { contextCap: 400000 } }, async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
+  const text = (await compose($, ['Agent', budgetTool])).sections.find((s: { id: string }) => s.id === 'toolkit:context').text
+  expect(text).toMatch(/  - 400k: complex work/)
+  expect(text).not.toMatch(/500k-400k/)
 })

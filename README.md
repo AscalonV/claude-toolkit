@@ -1,6 +1,6 @@
 # toolkit
 
-A Claude Code plugin with four parts:
+A Claude Code plugin with five parts:
 
 - a **status line** that shows who is signed in and how much usage is left,
 - a **usage guard** that warns Claude before a limit is hit and starts a handoff file,

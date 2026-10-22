@@ -171,7 +171,7 @@ export const rules = () =>
     `- The conversation has a context budget (default ${k(configured)}; the status line shows context/budget). At the start of every task, also a new task in this chat, set it with the ${TOOL} tool in the same message as your first other tool call:`,
     '  - ~200k: bookkeeping, small fixes, tasks that split well across handoffs.',
     '  - 300k: normal feature work.',
-    `  - 500k-${k(cap)}: complex work where a compaction would cost quality (debugging or rendering across many files, large refactors, long log analysis).`,
+    `  - ${cap > 500_000 ? `500k-${k(cap)}` : k(cap)}: complex work where a compaction would cost quality (debugging or rendering across many files, large refactors, long log analysis).`,
     `- When the task has a handoff file (a new one, or the one a new chat continues from), name it with the ${TOOL} tool's handoff field (also in the same call as the budget), so the usage guard and the compaction point to it. A new task in the same chat that has no handoff file: pass handoff: "none" with its budget, so the previous task's file is no longer pointed to (never while a task goes on, e.g. when raising the budget).`,
     '- A bigger context makes every request cost more (the whole conversation is sent each time); a compaction drops details. Pick the smallest budget the task works well with.',
     `- At 90 % you are told to decide (again at 100 % and every further 10 %; the plugin never compacts by itself): raise the budget (${TOOL} with tokens) if the task needs the context, or finish the current step, fill in the handoff, call ${TOOL} with compact: true (carryOn: true when the task isn't finished and needs nothing from the user) and end your turn. The plugin compacts after it and, with carryOn, starts the next turn from the handoff.`,
@@ -261,11 +261,9 @@ async function compactNow($: EngineInterface, carryOn: boolean) {
     if (interactive) {
       const r = await $.session.compact({ instructions })
       if (r.skip) {
-        // Vetoed (a hook, a PreCompact rule): not asked again at every turn's end.
+        // Vetoed (a hook, a PreCompact rule): Claude hears why, once; not asked again at every turn's end.
         running = undefined
-        pending = undefined
-        await save($)
-        return
+        return failed($, r.skip)
       }
     } else {
       // Headless (-p, an SDK host such as an IDE extension): $.session.compact is not available
