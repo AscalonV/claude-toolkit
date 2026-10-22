@@ -27,7 +27,11 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
     files.has(norm(e.path)) ? { value: files.get(norm(e.path)) } : Promise.reject(new Error('missing')))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => (files.set(norm(e.path), e.text), { value: undefined }))
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: files.has(norm(e.path)) }))
-  on('fs.list', () => ({ value: [] }))
+  on('fs.list', (_: unknown, e: { path: string }) => ({
+    value: [...files.keys()]
+      .filter(p => p.slice(0, p.lastIndexOf('/')) === norm(e.path))
+      .map(p => ({ name: p.slice(p.lastIndexOf('/') + 1), kind: 'file' })),
+  }))
   on('process.run', (_: unknown, e: { argv: string[] }) => {
     const out: Record<string, string> = { 'rev-parse': '/proj', branch: 'main', status: ' M src/a.ts' }
     if (!git) return { value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -109,6 +113,17 @@ test('after compaction, Claude is pointed at the handoff', async ($, on) => {
   await $.session.measure(measure(86) as never)
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
   expect(texts(session.appended()).pop()).toMatch(/^main: .*compacted\. Read the handoff file \/proj\/handoffs\/.*abcdef12\.md/)
+})
+
+test("after a reload, the guard goes on with the session's own handoff, not a new one", async ($, on) => {
+  const session = world(on)
+  files.set('/proj/handoffs/2026-10-22-0900-abcdef12.md', '# Handoff (before the reload)')
+  files.set('/proj/handoffs/2026-10-22-0930-99999999.md', '# Handoff of another session')
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(86) as never)
+  expect(texts(session.appended())[0]).toMatch(/the handoff file \/proj\/handoffs\/2026-10-22-0900-abcdef12\.md/)
+  expect([...files.keys()].filter(p => p.startsWith('/proj/handoffs/')).length).toBe(2)
+  expect(files.get('/proj/handoffs/2026-10-22-0900-abcdef12.md')).toBe('# Handoff (before the reload)')
 })
 
 test('a broad task outside any project keeps its handoff in the config folder', async ($, on) => {

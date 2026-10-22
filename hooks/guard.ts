@@ -32,7 +32,8 @@ const usageLines = (): Usage[] =>
     .filter(w => LABELS[w.kind])
     .map(w => ({ label: LABELS[w.kind], percent: Math.round(w.percentUsed), resets: resets(w.resetsAt) }))
 
-// This session's handoff, created on first use.
+// This session's handoff: the one it already has (from before a reload or restart), else a new one
+// created on first use.
 function ensureHandoff($: EngineInterface) {
   return (handoff ??= makeHandoff($))
 }
@@ -41,7 +42,8 @@ async function makeHandoff($: EngineInterface) {
   if (!config.handoffFile) return undefined
   try {
     const { dir, project } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
-    return await createHandoff($, dir, { account, sessionId: await $.session.id(), project, usage: usageLines() })
+    const sessionId = await $.session.id()
+    return (await newestHandoff($, dir, sessionId)) ?? (await createHandoff($, dir, { account, sessionId, project, usage: usageLines() }))
   } catch {
     return undefined
   }
@@ -101,7 +103,7 @@ export async function afterCompact($: EngineInterface) {
   if (!config.guard) return
   const own = handoff ? await handoff : undefined
   const { dir } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
-  const path = own ?? (await newestHandoff($, dir))
+  const path = own ?? (await newestHandoff($, dir, await $.session.id())) ?? (await newestHandoff($, dir))
   if (path) await send($, `Usage guard: the conversation was just compacted. Read the handoff file ${path} and carry on from there.`)
 }
 

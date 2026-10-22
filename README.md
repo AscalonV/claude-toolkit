@@ -53,7 +53,7 @@ At the first warning in a session, the plugin creates `<YYYY-MM-DD>-<HHMM>-<sess
 - **In a project:** `<project>/handoffs/`. The project is the git top level, or else the nearest folder up from the working directory that has a `CLAUDE.md` or `.claude/` folder. Your home folder doesn't count, even though it holds `~/.claude`.
 - **Outside a project** (a broad task, for example started in your home folder): `~/.claude/handoffs/`, or `CLAUDE_CONFIG_DIR/handoffs/`.
 
-It never overwrites an existing file. It fills in what it knows and leaves the rest for Claude:
+If the session already has one (from before a restart or plugin reload), the guard keeps using that file instead of starting a new one. It never overwrites an existing file. It fills in what it knows and leaves the rest for Claude:
 
 ```markdown
 # Handoff 2026-10-22 14:05

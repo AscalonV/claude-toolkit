@@ -50,11 +50,14 @@ export async function handoffDir($: EngineInterface, folder: string, outside: st
   return { dir: `${project ?? (await configDir($))}/${slash(pick)}`, project }
 }
 
-// The newest handoff in the folder, by the date-and-time in its name.
-export async function newestHandoff($: EngineInterface, dir: string) {
+// The newest handoff in the folder, by the date-and-time in its name; with a session id, the
+// newest of that session (so a reload or restart goes on with the file it already has).
+export async function newestHandoff($: EngineInterface, dir: string, sessionId?: string) {
+  const own = sessionId ? `${sessionId.slice(0, 8)}(-\\d+)?` : '.*'
+  const name = new RegExp(`^\\d{4}-\\d{2}-\\d{2}-\\d{4}-${own}\\.md$`)
   try {
     const names = (await $.fs.list(dir))
-      .filter(f => f.kind === 'file' && /^\d{4}-\d{2}-\d{2}-\d{4}-.*\.md$/.test(f.name))
+      .filter(f => f.kind === 'file' && name.test(f.name))
       .map(f => f.name)
       .sort()
     return names.length ? `${dir}/${names[names.length - 1]}` : undefined
