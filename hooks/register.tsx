@@ -22,12 +22,14 @@ import {
   currentBudget,
   rules as budgetRules,
   duringCompaction,
+  measureLimit,
   resetBudget,
   restoreBudget,
   setBudget,
   setFromTool,
   setInteractive,
   toolSpec,
+  turnAborted,
   turnEnded,
   turnStarted,
 } from './context'
@@ -176,6 +178,7 @@ export const register: Register = (on, options) => {
     await restoreGuard($)
     await restoreBudget($)
     await load($)
+    if (config.contextBudget) await measureLimit($)
     if (config.contextBudget) await $.tool.register(toolSpec)
     if (bad.length) {
       const text = `${$.plugin.name}: invalid setting ${bad.join(', ')}; using the default.`
@@ -215,6 +218,7 @@ export const register: Register = (on, options) => {
     await takeReading($, e.rateLimits, e.changed.includes('rateLimits'))
     await draw($)
     await checkAll($)
+    if (config.contextBudget) await measureLimit($) // a model switch moves Claude Code's own compaction
     await beforeRequest($) // the context changed (after a turn)
     return next(e)
   })
@@ -230,6 +234,7 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (!e.agentId) turnEnded()
+    if (!e.agentId && e.isAborted) await turnAborted($)
     if (!e.agentId && !e.isAborted) await afterTurn($, !atStop())
     return result
   })

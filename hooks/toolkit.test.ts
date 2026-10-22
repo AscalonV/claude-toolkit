@@ -6,6 +6,8 @@ const files = new Map<string, string>()
 const SID = 'abcdef12-3456-7890-abcd-ef1234567890'
 let sid = SID // the session id; a /clear changes it
 let ctxNow = 0 // the context size session.usage answers
+let winNow = 1000000 // the model's window
+let compactAt: number | undefined // where Claude Code compacts on its own (breakdown)
 let clock: any
 let compactedWith: string | undefined // the instructions of the last compaction
 let refuseCompact = false // the next compaction is refused, as when a turn started first
@@ -21,6 +23,8 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
   mock.env(on, { HOME: '/home/t' })
   sid = SID
   ctxNow = 0
+  winNow = 1000000
+  compactAt = undefined
   compactedWith = undefined
   refuseCompact = false
   holdCompact = undefined
@@ -28,7 +32,13 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
   on('tool.register', () => ({ value: undefined }))
   on('session.id', () => ({ value: sid }))
   on('session.cwd', () => ({ value: cwd }))
-  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 1000000, tokens: ctxNow }, rateLimits: [] } }))
+  on('session.usage', (_: unknown, e: { breakdown?: string } = {}) => ({
+    value: {
+      startedAt: NOW,
+      context: { window: winNow, tokens: ctxNow, ...(e?.breakdown && compactAt ? { breakdown: { autoCompactThreshold: compactAt } } : {}) },
+      rateLimits: [],
+    },
+  }))
   on('settings.read', () => ({ value: { statusLine, ...settings } }))
   on('fs.read', (_: unknown, e: { path: string }) =>
     files.has(norm(e.path)) ? { value: files.get(norm(e.path)) } : Promise.reject(new Error('missing')))
@@ -664,4 +674,73 @@ test('after a reload, a budget Claude never set follows the settings', { options
   ctxNow = 280000 // past 90 % of the old 300k, not of the new 500k
   await $.session.measure(measure(10) as never)
   expect(texts(session.appended()).some(t => /Context budget:/.test(t))).toBe(false)
+})
+
+test('an interrupted turn keeps the compaction Claude asked for, but the task no longer resumes by itself', async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await start($, 200000)
+  ctxNow = 185000
+  await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
+  await $.turn.complete({ answer: '', reason: 'aborted', durationMs: 1, isAborted: true, turnId: 't1' } as never)
+  expect(texts(session.appended()).pop()).toMatch(/^main: Context budget: the turn that asked for the compaction was interrupted/)
+  await clock.advance(1000)
+  expect(compactedWith).toBe(undefined)
+  await turnStart($) // the user's message
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(submitted.length).toBe(0)
+})
+
+test("a budget above Claude Code's own compaction point: the notes count against that point", async ($, on) => {
+  const { session } = budgetWorld(on)
+  winNow = 200000
+  compactAt = 167000
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never) // the default budget, 300k
+  ctxNow = 140000
+  await $.session.measure(measure(10) as never)
+  expect(texts(session.appended()).filter(t => /Context budget:/.test(t)).length).toBe(0)
+  ctxNow = 152000
+  await $.session.measure(measure(10) as never)
+  expect(texts(session.appended()).pop()).toMatch(/^main: Context budget: 152k of 167k\. Claude Code compacts on its own at 167k, below the budget of 300k/)
+})
+
+test('without a compaction point, the model window caps the budget the notes count against; a model switch starts them over', async ($, on) => {
+  const { session } = budgetWorld(on)
+  await start($, 500000)
+  ctxNow = 185000
+  await $.session.measure(measure(10) as never)
+  expect(texts(session.appended()).filter(t => /Context budget:/.test(t)).length).toBe(0)
+  winNow = 200000 // /model to a 200k model
+  await $.session.measure(measure(10) as never)
+  expect(texts(session.appended()).pop()).toMatch(/^main: Context budget: 185k of 200k\./)
+})
+
+test('a new task with handoff "none": the guard no longer names the previous task file; raising the budget keeps it', async ($, on) => {
+  const { session } = budgetWorld(on)
+  await start($, 200000)
+  await $.tool.call({ tool: budgetTool, reason: 'task 1', handoff: '/proj/handoffs/task1.md' } as never)
+  await $.tool.call({ tool: budgetTool, tokens: 300000, reason: 'task 1 needs more' } as never) // no handoff: kept
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
+  expect(texts(session.appended()).pop()).toMatch(/Read the handoff file \/proj\/handoffs\/task1\.md/)
+
+  const r = JSON.stringify(await $.tool.call({ tool: budgetTool, tokens: 200000, reason: 'new task: small fix', handoff: 'none' } as never))
+  expect(r).toMatch(/no handoff file; the previous one is no longer pointed to/)
+  await $.session.measure(measure(86) as never)
+  const wrap = texts(session.appended()).filter(t => /^main: Usage guard: 5-hour/.test(t))
+  expect(wrap[0]).not.toMatch(/task1\.md/)
+  expect(wrap[0]).toMatch(/\/proj\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12\.md/) // a new draft for the new task
+})
+
+test('handoff "none" also drops the session\'s earlier draft: a compaction then names no file', async ($, on) => {
+  const { session } = budgetWorld(on)
+  await start($, 200000)
+  await $.session.measure(measure(86) as never) // the first warning: a draft for task 1
+  const draft = [...files.keys()].find(p => p.startsWith('/proj/handoffs/'))!
+  expect(draft).toBeDefined()
+  await $.tool.call({ tool: budgetTool, reason: 'new task', handoff: 'none' } as never)
+  const before = session.appended().length
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
+  expect(texts(session.appended()).slice(before).filter(t => /handoff file/.test(t))).toEqual([])
 })

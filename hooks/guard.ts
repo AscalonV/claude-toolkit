@@ -23,6 +23,9 @@ const warned = new Set<string>()
 let handoff: Promise<string | undefined> | undefined
 // The task's own handoff file, named by Claude (ContextBudget `handoff`): it wins over the draft.
 let taskHandoff: string | undefined
+// Claude said the current task has no handoff file (ContextBudget handoff "none"): the session's earlier
+// draft belonged to the task before, so the next warning starts a new one.
+let fresh = false
 let mainTurn = false // the main chat started a turn (since the last load)
 const STATE = { plugin: 'toolkit', key: 'guard' } as const
 
@@ -33,12 +36,21 @@ export const mainTurnStarted = () => (mainTurn = true)
 
 async function save($: EngineInterface) {
   const sessionId = await $.session.id().catch(() => undefined)
-  const value: ToolkitGuard = { ...(sessionId ? { sessionId } : {}), warned: [...warned], ...(taskHandoff ? { taskHandoff } : {}) }
+  const value: ToolkitGuard = { ...(sessionId ? { sessionId } : {}), warned: [...warned], ...(taskHandoff ? { taskHandoff } : {}), ...(fresh ? { fresh } : {}) }
   await $.state.set(STATE, value).catch(() => {})
 }
 
 export async function setTaskHandoff($: EngineInterface, path: string) {
   taskHandoff = path
+  fresh = false
+  await save($)
+}
+
+// A new task without a handoff file: the task before's file and draft are no longer pointed to.
+export async function clearTaskHandoff($: EngineInterface) {
+  taskHandoff = undefined
+  handoff = undefined
+  fresh = true
   await save($)
 }
 
@@ -47,13 +59,17 @@ export async function restoreGuard($: EngineInterface) {
   const { value } = await $.state.get(STATE).catch(() => ({ value: undefined }))
   if (!value) return
   for (const key of value.warned) warned.add(key) // keyed by session: another session's never match
-  if (!value.sessionId || value.sessionId === (await $.session.id())) taskHandoff ??= value.taskHandoff
+  if (!value.sessionId || value.sessionId === (await $.session.id())) {
+    taskHandoff ??= value.taskHandoff
+    fresh ||= value.fresh === true
+  }
 }
 
 // A /clear or a resume: another conversation, whose notes start with its first turn.
 export function resetGuard() {
   taskHandoff = undefined
   handoff = undefined
+  fresh = false
   mainTurn = false
 }
 
@@ -82,7 +98,7 @@ async function makeHandoff($: EngineInterface) {
   try {
     const { dir, project } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
     const sessionId = await $.session.id()
-    return (await newestHandoff($, dir, sessionId)) ?? (await createHandoff($, dir, { account, sessionId, project, usage: usageLines() }))
+    return (fresh ? undefined : await newestHandoff($, dir, sessionId)) ?? (await createHandoff($, dir, { account, sessionId, project, usage: usageLines() }))
   } catch {
     return undefined
   }
@@ -149,7 +165,7 @@ export async function checkAll($: EngineInterface) {
 export async function knownHandoff($: EngineInterface) {
   if (taskHandoff) return taskHandoff
   const own = handoff ? await handoff : undefined
-  if (own || !config.handoffFile) return own
+  if (own || fresh || !config.handoffFile) return own
   const { dir } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
   return newestHandoff($, dir, await $.session.id())
 }

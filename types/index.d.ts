@@ -15,11 +15,13 @@ export type ToolkitContext = {
   pending?: { carryOn: boolean }
 }
 
-// The guard notes already sent (session|loop|window|reset|stage), and the task's own handoff file.
+// The guard notes already sent (session|loop|window|reset|stage), the task's own handoff file, and
+// `fresh` once Claude said the task has none (the session's earlier draft was the task before's).
 export type ToolkitGuard = {
   sessionId?: string
   warned: string[]
   taskHandoff?: string
+  fresh?: boolean
 }
 
 declare module 'claude-code' {

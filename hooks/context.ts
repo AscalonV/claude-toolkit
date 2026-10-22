@@ -14,7 +14,7 @@
 import type { EngineInterface, PromptSubmitInput, Timer } from 'claude-code'
 
 import type { ToolkitContext } from '../types'
-import { afterCompact, setTaskHandoff, taskHandoffPath } from './guard'
+import { afterCompact, clearTaskHandoff, setTaskHandoff, taskHandoffPath } from './guard'
 
 export const TOOL = 'ContextBudget'
 const MIN = 100_000
@@ -34,6 +34,9 @@ let due: Timer | undefined
 // The compaction running; `userWrote` once a message of the user's arrived meanwhile.
 let running: { carryOn: boolean; userWrote: boolean } | undefined
 let turnRunning = false // a main-loop turn is running
+// Where Claude Code compacts on its own (its threshold, else the model's window); 0 not known yet.
+// Below the budget it stands in for it, so the decision notes come before that compaction.
+let limit = 0
 // Under the REPL $.session.compact works; headless (-p, SDK hosts) only the /compact command does.
 let interactive = true
 
@@ -46,6 +49,24 @@ export const k = (n: number) => `${Math.round(n / 1000)}k`
 async function context($: EngineInterface) {
   return (await $.session.usage()).context
 }
+
+// Reads where Claude Code compacts on its own (a local estimate, no request). A model switch or
+// another window moves it: the decision notes then start over against the new figure.
+export async function measureLimit($: EngineInterface) {
+  try {
+    const { context: c } = await $.session.usage({ breakdown: 'summary' })
+    const next = c.breakdown?.autoCompactThreshold ?? c.window ?? 0
+    if (next && next !== limit) {
+      if (limit) step = 0
+      limit = next
+    }
+  } catch {}
+}
+
+// The size the decision notes are measured against: the budget, or Claude Code's own compaction point
+// where that comes first.
+const effective = () => (limit && limit < budget ? limit : budget)
+const below = () => (effective() < budget ? ` Claude Code compacts on its own at ${k(limit)}, below the budget of ${k(budget)}: the notes count against ${k(limit)}.` : '')
 
 async function save($: EngineInterface) {
   const sessionId = await $.session.id().catch(() => undefined)
@@ -93,7 +114,10 @@ export const toolSpec = {
       userAsked: { type: 'boolean', description: 'True only when the user asked for a budget above the cap' },
       compact: { type: 'boolean', description: 'True: the handoff is filled in; compact at the end of this turn (then end the turn)' },
       carryOn: { type: 'boolean', description: 'With compact: true when the task is not finished and needs no input from the user, so work resumes by itself after the compaction' },
-      handoff: { type: 'string', description: "The task's handoff file (absolute path), as soon as it has one: the usage guard and the compaction point to it" },
+      handoff: {
+        type: 'string',
+        description: `The task's handoff file (absolute path), as soon as it has one: the usage guard and the compaction point to it. "none" only at the start of a new task that has no handoff file (the previous task's file is then no longer pointed to)`,
+      },
     },
     required: ['reason'],
   },
@@ -104,9 +128,12 @@ export const toolSpec = {
 // window when the user asked).
 export async function setFromTool($: EngineInterface, input: Record<string, unknown>) {
   const { tokens: ctx = 0, window = cap } = await context($)
-  const path = typeof input.handoff === 'string' ? input.handoff.trim() : ''
-  if (path) await setTaskHandoff($, path)
-  const named = path ? ` Handoff file: ${path}.` : ''
+  const given = typeof input.handoff === 'string' ? input.handoff.trim() : ''
+  const isNone = given.toLowerCase() === 'none'
+  const path = isNone ? '' : given
+  if (isNone) await clearTaskHandoff($)
+  else if (path) await setTaskHandoff($, path)
+  const named = isNone ? ' This task has no handoff file; the previous one is no longer pointed to.' : path ? ` Handoff file: ${path}.` : ''
   if (input.compact === true) {
     pending = { carryOn: input.carryOn === true }
     await save($)
@@ -115,7 +142,7 @@ export async function setFromTool($: EngineInterface, input: Record<string, unkn
       result: `Compaction set for the end of this turn (context ${k(ctx)}), ${pending.carryOn ? 'then the task resumes by itself from the handoff' : 'then the user is waited for'}.${named}${none} End your turn now.`,
     }
   }
-  if (input.tokens === undefined && path) return { result: `Handoff file set to ${path}.` }
+  if (input.tokens === undefined && given) return { result: isNone ? named.trim() : `Handoff file set to ${path}.` }
   const asked = Number(input.tokens)
   if (!Number.isFinite(asked)) return { deny: 'Give tokens (a new budget), compact: true or handoff.' }
   const top = input.userAsked === true ? Math.max(cap, window) : cap
@@ -125,7 +152,7 @@ export async function setFromTool($: EngineInterface, input: Record<string, unkn
   step = 0 // a new budget gets its own 90 % note, also when the context is already past it
   await save($)
   const capped = asked > top ? ` (capped: above ${k(cap)} only when the user asks)` : ''
-  return { result: `Context budget set to ${k(budget)}${capped}; the context is at ${k(ctx)}.${named}` }
+  return { result: `Context budget set to ${k(budget)}${capped}; the context is at ${k(ctx)}.${below()}${named}` }
 }
 
 // Fixed text (no live numbers), so the system prompt stays cached: the default from the settings,
@@ -137,7 +164,7 @@ export const rules = () =>
     '  - ~200k: bookkeeping, small fixes, tasks that split well across handoffs.',
     '  - 300k: normal feature work.',
     `  - 500k-${k(cap)}: complex work where a compaction would cost quality (debugging or rendering across many files, large refactors, long log analysis).`,
-    `- When the task has a handoff file (a new one, or the one a new chat continues from), name it with the ${TOOL} tool's handoff field (also in the same call as the budget), so the usage guard and the compaction point to it.`,
+    `- When the task has a handoff file (a new one, or the one a new chat continues from), name it with the ${TOOL} tool's handoff field (also in the same call as the budget), so the usage guard and the compaction point to it. A new task in the same chat that has no handoff file: pass handoff: "none" with its budget, so the previous task's file is no longer pointed to (never while a task goes on, e.g. when raising the budget).`,
     '- A bigger context makes every request cost more (the whole conversation is sent each time); a compaction drops details. Pick the smallest budget the task works well with.',
     `- At 90 % you are told to decide (again at 100 % and every further 10 %; the plugin never compacts by itself): raise the budget (${TOOL} with tokens) if the task needs the context, or finish the current step, fill in the handoff, call ${TOOL} with compact: true (carryOn: true when the task isn't finished and needs nothing from the user) and end your turn. The plugin compacts after it and, with carryOn, starts the next turn from the handoff.`,
     `- Name the budget in the effort line, e.g. \`Effort: high (new feature) · Context: 300k\`. Above ${k(cap)} only when the user asks (userAsked).`,
@@ -151,14 +178,15 @@ const stepOf = (share: number) => (share < NEAR ? 0 : share < 1 ? NEAR : Math.fl
 export async function beforeRequest($: EngineInterface) {
   if (!budget || pending) return
   const { tokens: ctx = 0 } = await context($)
-  const reached = stepOf(ctx / budget)
+  const size = effective()
+  const reached = stepOf(ctx / size)
   if (reached <= step) return
   step = reached
   await save($)
   const past = reached >= 1 ? ', past the budget (the plugin does not compact by itself)' : ''
   await note(
     $,
-    `Context budget: ${k(ctx)} of ${k(budget)}${past}. Decide now: if the task needs this context, raise the budget with ${TOOL}. Otherwise finish the current step, fill in the handoff, call ${TOOL} with compact: true (carryOn: true if the task isn't finished and needs nothing from the user) and end your turn.`,
+    `Context budget: ${k(ctx)} of ${k(size)}${past}.${below()} Decide now: if the task needs this context, raise the budget with ${TOOL}. Otherwise finish the current step, fill in the handoff, call ${TOOL} with compact: true (carryOn: true if the task isn't finished and needs nothing from the user) and end your turn.`,
   )
 }
 
@@ -172,6 +200,17 @@ const RESUME =
 
 // A main-loop turn ended (also an interrupted one).
 export const turnEnded = () => (turnRunning = false)
+
+const ABORTED = `Context budget: the turn that asked for the compaction was interrupted. The compaction now runs at the end of the next turn, and the task does not resume by itself afterwards. If it still should (the user's message doesn't change it), call ${TOOL} again with compact: true and carryOn: true.`
+
+// An interrupted main-loop turn: the user stepped in, so a compaction Claude asked for waits for the
+// next turn's end and no longer carries on by itself. Claude hears it once.
+export async function turnAborted($: EngineInterface) {
+  if (!budget || !pending?.carryOn) return
+  pending = { carryOn: false }
+  await save($)
+  await note($, ABORTED)
+}
 
 // At the end of a main-loop turn: the compaction Claude asked for. `mayCarryOn` is false at the usage
 // guard's stop stage.
