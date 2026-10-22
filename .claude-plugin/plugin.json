@@ -1,6 +1,6 @@
 {
   "name": "toolkit",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "types": "./types/index.d.ts",
   "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents, optional automatic agent use and a per-task context budget",
   "userConfig": {
@@ -43,7 +43,7 @@
     "contextBudget": {
       "type": "number",
       "title": "Default context budget",
-      "description": "Tokens at which the conversation is compacted until Claude sets a budget for the task (100000 to 1000000); 0 turns the context budget off",
+      "description": "The default context budget until Claude sets one for the task (100000 to 1000000): at 90 % of it Claude must decide (raise it, or hand off and compact); 0 turns the context budget off",
       "default": 300000,
       "min": 0,
       "max": 1000000

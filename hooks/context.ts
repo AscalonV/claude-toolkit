@@ -14,7 +14,7 @@
 import type { EngineInterface, PromptSubmitInput, Timer } from 'claude-code'
 
 import type { ToolkitContext } from '../types'
-import { afterCompact, clearTaskHandoff, setTaskHandoff, taskHandoffPath } from './guard'
+import { afterCompact, atStop, clearTaskHandoff, setTaskHandoff, taskHandoffPath } from './guard'
 
 export const TOOL = 'ContextBudget'
 const MIN = 100_000
@@ -138,8 +138,14 @@ export async function setFromTool($: EngineInterface, input: Record<string, unkn
     pending = { carryOn: input.carryOn === true }
     await save($)
     const none = taskHandoffPath() ? '' : ' No handoff file is named yet: if you filled one in, call again with handoff.'
+    // At the usage guard's stop stage nothing resumes by itself (afterTurn): say so.
+    const then = !pending.carryOn
+      ? 'then the user is waited for'
+      : atStop()
+        ? "then the user is waited for: the usage guard is at its stop stage, so the task doesn't resume by itself"
+        : 'then the task resumes by itself from the handoff'
     return {
-      result: `Compaction set for the end of this turn (context ${k(ctx)}), ${pending.carryOn ? 'then the task resumes by itself from the handoff' : 'then the user is waited for'}.${named}${none} End your turn now.`,
+      result: `Compaction set for the end of this turn (context ${k(ctx)}), ${then}.${named}${none} End your turn now.`,
     }
   }
   if (input.tokens === undefined && given) return { result: isNone ? named.trim() : `Handoff file set to ${path}.` }
@@ -191,7 +197,7 @@ export async function beforeRequest($: EngineInterface) {
 }
 
 const CONTINUE =
-  'Continue the task: the conversation was compacted at its context budget. Read the handoff file the usage guard note above names (if none is named, go on from the summary), set the context budget for the rest of the task, and carry on where you stopped.'
+  'Continue the task: the conversation was compacted, as you asked to stay within the context budget. Read the handoff file the usage guard note above names (if none is named, go on from the summary), set the context budget for the rest of the task, and carry on where you stopped.'
 
 const MOVED = `Context budget: the compaction you asked for did not run, because a new turn (the user's message) started first. Answer the user. The plugin compacts at the end of this turn and then waits for the user. If the task should still resume by itself afterwards (the user's message doesn't change it), call ${TOOL} again with compact: true and carryOn: true; if the task needs the context, raise the budget instead.`
 
@@ -229,7 +235,8 @@ export async function afterTurn($: EngineInterface, mayCarryOn: boolean) {
 
 async function compactNow($: EngineInterface, carryOn: boolean) {
   const run = (running = { carryOn, userWrote: false })
-  const instructions = `Context budget of ${k(budget)} reached. Keep: the task, its handoff file, the user's open questions and answers, the effort and context budget rules and the current budget (${k(budget)}).`
+  const ctx = (await context($).catch(() => ({ tokens: 0 }))).tokens ?? 0
+  const instructions = `Compaction Claude asked for at ${k(ctx)} of the ${k(budget)} context budget. Keep: the task, its handoff file, the user's open questions and answers, the effort and context budget rules and the current budget (${k(budget)}).`
   try {
     if (interactive) {
       const r = await $.session.compact({ instructions })

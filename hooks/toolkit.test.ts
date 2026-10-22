@@ -315,7 +315,7 @@ test('at 90 % Claude must decide; a compaction it asks for with carryOn resumes 
   expect(answer).toMatch(/then the task resumes by itself/)
   await turnEnd($)
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 200k reached\. Keep: the task, its handoff file/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget\. Keep: the task, its handoff file/)
   expect(submitted.length).toBe(1)
   expect(submitted[0]).toMatch(/^Continue the task/)
 })
@@ -378,7 +378,7 @@ test('headless (-p, an SDK host), the compaction runs as the /compact command', 
   await clock.advance(1000)
   expect(compactedWith).toBe(undefined) // not through $.session.compact, which headless sessions refuse
   expect(commands.map(c => c.command)).toEqual(['compact'])
-  expect(commands[0].args).toMatch(/Context budget of 200k reached/)
+  expect(commands[0].args).toMatch(/asked for at \d+k of the 200k context budget/)
   expect(submitted).toEqual([expect.stringMatching(/^Continue the task/)])
 })
 
@@ -405,7 +405,7 @@ test("at the usage guard's stop stage, a carryOn compaction does not resume by i
   await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never)
   await turnEnd($)
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget/)
   expect(submitted.length).toBe(0)
 })
 
@@ -521,7 +521,7 @@ test('a precompute is no compaction: no note, and the compaction Claude asked fo
   compactedWith = undefined
   await turnEnd($)
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget/)
 })
 
 test('without a main turn yet, no guard note and no draft; the first turn brings both', async ($, on) => {
@@ -563,7 +563,7 @@ test('after a reload they are read back: no second note, and the compaction aske
   ctxNow = 300000
   await turnEnd($)
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 500k reached/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 500k context budget/)
   expect(texts(session.appended()).pop()).toMatch(/Read the handoff file \/proj\/handoffs\/task\.md/)
   expect(submitted).toEqual([expect.stringMatching(/^Continue the task/)])
 })
@@ -581,7 +581,7 @@ test("a queued message that starts a turn first moves the compaction to that tur
   expect(texts(session.appended()).pop()).toMatch(/^main: Context budget: the compaction you asked for did not run.*call ContextBudget again with compact: true and carryOn: true/)
   await turnEnd($)
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget/)
   expect(submitted.length).toBe(0) // then the user is waited for
 })
 
@@ -597,7 +597,7 @@ test('after the move, Claude asking again with carryOn resumes the task', async 
   await $.tool.call({ tool: budgetTool, reason: 'answered; task unchanged', compact: true, carryOn: true } as never)
   await turnEnd($)
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget/)
   expect(submitted).toEqual([expect.stringMatching(/^Continue the task/)])
 })
 
@@ -615,7 +615,7 @@ test('a message typed while the compaction runs goes first, with the note to res
   await $.prompt.submit({ text: 'quick question', origin: { kind: 'composer' } } as never)
   release()
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget/)
   expect(prompts.map(p => p.text)).toEqual(['quick question'])
   expect(prompts[0].context?.join()).toMatch(/the user wrote first\. Answer them, then carry on/)
 })
@@ -688,7 +688,7 @@ test('an interrupted turn keeps the compaction Claude asked for, but the task no
   await turnStart($) // the user's message
   await turnEnd($)
   await clock.advance(1000)
-  expect(compactedWith).toMatch(/Context budget of 200k reached/)
+  expect(compactedWith).toMatch(/asked for at \d+k of the 200k context budget/)
   expect(submitted.length).toBe(0)
 })
 
@@ -743,4 +743,17 @@ test('handoff "none" also drops the session\'s earlier draft: a compaction then 
   const before = session.appended().length
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
   expect(texts(session.appended()).slice(before).filter(t => /handoff file/.test(t))).toEqual([])
+})
+
+test('at the stop stage, compact with carryOn says the user is waited for', async ($, on) => {
+  const { submitted } = budgetWorld(on)
+  await start($, 200000)
+  await $.session.measure(measure(92) as never)
+  ctxNow = 185000
+  const r = JSON.stringify(await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never))
+  expect(r).toMatch(/usage guard is at its stop stage, so the task doesn't resume by itself/)
+  await turnEnd($)
+  await clock.advance(1000)
+  expect(compactedWith).toMatch(/^Compaction Claude asked for at 185k of the 200k context budget\./)
+  expect(submitted.length).toBe(0)
 })

@@ -176,7 +176,7 @@ Every request sends the whole conversation, so a long chat costs more with every
 - Headless sessions (`claude -p`, SDK hosts such as the IDE extensions) compact through the `/compact` command, since the plugin API's own compaction isn't available there yet. A compaction refused for any other reason is reported to Claude once, with the reason.
 - The budget Claude set, a compaction it asked for and the task's handoff file survive a plugin reload or update (`$.state`). `/clear` and `/resume` start them over, and so does a new process (`claude --resume`). A budget Claude never set follows the `contextBudget` setting, also after you change it.
 - The status line shows `ctx 95k/300k`. The rules in Claude's instructions name the default from the settings, so they read the same whatever budget is set.
-- A turn runs from your message until Claude's reply ends; the plugin compacts between turns, so Claude Code's own compaction stays as the safety net for one extremely long turn. Don't set `autoCompactWindow` below the cap: Claude Code would compact there before a larger budget is reached.
+- The notes come before every request of the main chat, also in the middle of a long turn; a compaction Claude asks for runs between turns. If Claude never decides, Claude Code's own compaction stays as the safety net. An `autoCompactWindow` below a budget is allowed: the notes then count against it (see above), so a budget above it has no effect.
 
 ## Install
 
