@@ -1,9 +1,10 @@
-// The usage guard's settings: the manifest's userConfig values, checked, with defaults.
+// The plugin's settings: the manifest's userConfig values, checked, with defaults.
 import type { PluginOptions } from 'claude-code'
 
 export type Stage = 'wrapUp' | 'stop'
 
 export type Config = {
+  effortRules: boolean
   guard: boolean
   agentNotes: boolean
   handoffFile: boolean
@@ -14,6 +15,7 @@ export type Config = {
 }
 
 export const DEFAULTS: Config = {
+  effortRules: true,
   guard: true,
   agentNotes: true,
   handoffFile: true,
@@ -62,6 +64,7 @@ export function readConfig(options: PluginOptions): { config: Config; bad: strin
   const extra = options.extraNote
   return {
     config: {
+      effortRules: flag(options.effortRules, DEFAULTS.effortRules, 'effortRules', bad),
       guard: flag(options.guard, DEFAULTS.guard, 'guard', bad),
       agentNotes: flag(options.agentNotes, DEFAULTS.agentNotes, 'agentNotes', bad),
       handoffFile: flag(options.handoffFile, DEFAULTS.handoffFile, 'handoffFile', bad),

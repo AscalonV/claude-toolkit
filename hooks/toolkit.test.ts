@@ -8,7 +8,7 @@ const norm = (p: string) => p.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
 
 // The world beneath the plugin: a home folder with a login, one running agent, and by default
 // a project in git at /proj. Without git, `cwd` is where the session runs.
-function world(on: any, { git = true, cwd = '/proj' } = {}) {
+function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'command', command: 'x' } as object } = {}) {
   files.clear()
   files.set('/home/t/.claude.json', JSON.stringify({ oauthAccount: { displayName: 'Alex', accountUuid: 'acct-1' } }))
   mock.env(on, { HOME: '/home/t' })
@@ -16,7 +16,7 @@ function world(on: any, { git = true, cwd = '/proj' } = {}) {
   on('session.id', () => ({ value: 'abcdef12-3456-7890-abcd-ef1234567890' }))
   on('session.cwd', () => ({ value: cwd }))
   on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200000 }, rateLimits: [] } }))
-  on('settings.read', () => ({ value: { statusLine: { type: 'command', command: 'x' } } }))
+  on('settings.read', () => ({ value: { statusLine } }))
   on('fs.read', (_: unknown, e: { path: string }) =>
     files.has(norm(e.path)) ? { value: files.get(norm(e.path)) } : Promise.reject(new Error('missing')))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => (files.set(norm(e.path), e.text), { value: undefined }))
@@ -121,4 +121,24 @@ test('a project without git is found by its CLAUDE.md, from a subfolder', async 
   await $.session.start({ cwd: '/work/notes/sub', surface: 'terminal', isInteractive: true })
   await $.session.measure(measure(86) as never)
   expect(texts(session.appended())[0]).toMatch(/\/work\/notes\/handoffs\//)
+})
+
+test('the effort rules join the system prompt, naming the plugin skills', async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' }] }))
+  const { sections } = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] })
+  const effort = sections[sections.length - 1]
+  expect(effort.id).toBe('toolkit:effort')
+  expect(effort.text).toMatch(/The default is `high`/)
+  expect(effort.text).toMatch(/toolkit:effort-low, toolkit:effort-medium, toolkit:effort-high, toolkit:effort-xhigh/)
+})
+
+test('a status line from before the rename is replaced', async ($, on) => {
+  const old = { type: 'command', command: 'grep -F "$id" "/home/t/.claude/account-statusline.tsv" | cut -f3' }
+  world(on, { statusLine: old })
+  files.set('/home/t/.claude/settings.json', JSON.stringify({ model: 'opus', statusLine: old }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const settings = JSON.parse(files.get('/home/t/.claude/settings.json')!)
+  expect(settings.model).toBe('opus')
+  expect(settings.statusLine.command).toMatch(/\/home\/t\/\.claude\/toolkit\.tsv/)
 })

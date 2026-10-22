@@ -1,5 +1,12 @@
 {
   "name": "ascalonv",
-  "owner": { "name": "AscalonV" },
-  "plugins": [{ "name": "account-statusline", "source": "./" }]
+  "owner": {
+    "name": "AscalonV"
+  },
+  "plugins": [
+    {
+      "name": "toolkit",
+      "source": "./"
+    }
+  ]
 }

@@ -1,6 +1,13 @@
-# account-statusline
+# toolkit
 
-A Claude Code status line that shows who is signed in and how much usage is left, plus a usage guard that warns Claude before a limit is hit:
+A Claude Code plugin with three parts:
+
+- a **status line** that shows who is signed in and how much usage is left,
+- a **usage guard** that warns Claude before a limit is hit and starts a handoff file,
+- **effort skills** so Claude picks its thinking effort per turn.
+
+## Status line
+
 
 ```
 Alex | high | ctx 95k | 5h 42% (resets 15:30) | week 18% (resets Fri 09:00)
@@ -13,9 +20,9 @@ Alex | high | ctx 95k | 5h 42% (resets 15:30) | week 18% (resets Fri 09:00)
 
 It shows at launch, before the first message, and needs no Python or other runtime.
 
-## How it works
+### How it works
 
-Claude Code doesn't let plugins draw in the status line row, so on its first start the plugin adds a `statusLine` command to `~/.claude/settings.json`. It only does that when no status line is set; one of your own is left alone. The plugin keeps each running session's line in `~/.claude/account-statusline.tsv`, and the command prints the row for its session. Rows of sessions idle for 12 hours are dropped.
+Claude Code doesn't let plugins draw in the status line row, so on its first start the plugin adds a `statusLine` command to `~/.claude/settings.json`. It only does that when no status line is set; one of your own is left alone. The plugin keeps each running session's line in `~/.claude/toolkit.tsv`, and the command prints the row for its session. Rows of sessions idle for 12 hours are dropped.
 
 The first time, restart Claude Code once after installing so it picks up the new `statusLine` setting. With `CLAUDE_CONFIG_DIR` set, that folder is used instead of `~/.claude`.
 
@@ -78,6 +85,7 @@ It never overwrites an existing file. It fills in what it knows and leaves the r
 
 | Option | Default | What it does |
 | --- | --- | --- |
+| `effortRules` | `true` | Adds the effort rules to Claude's instructions |
 | `guard` | `true` | Turns the guard on or off |
 | `agentNotes` | `true` | Sends subagents their own notes |
 | `handoffFile` | `true` | Creates the handoff file |
@@ -90,17 +98,35 @@ It never overwrites an existing file. It fills in what it knows and leaves the r
 Set them when installing (`--config key=value`, repeatable), later in `/plugin` (the plugin's configure screen), or from a shell:
 
 ```
-echo '{"fiveHourWrapUp":"70","handoffFolder":"docs/handoffs"}' | claude plugin configure account-statusline@ascalonv --values-stdin
+echo '{"fiveHourWrapUp":"70","handoffFolder":"docs/handoffs"}' | claude plugin configure toolkit@ascalonv --values-stdin
 ```
 
 A value that isn't valid (not a number from 1 to 100, wrap-up not below stop, an empty folder) falls back to its default, and the session shows a one-line notice.
+
+## Effort skills
+
+The plugin ships four skills, `toolkit:effort-low`, `-medium`, `-high` and `-xhigh`. Each one sets Claude's thinking effort for the rest of the turn. The plugin also adds these rules to Claude's instructions:
+
+- The default is your session's effort setting (`high` if none is set). For a turn with tool work, Claude picks a level from the skill descriptions and, if it differs from the default, invokes that skill in the same message as its first tool call. A turn without tool calls doesn't switch.
+- Claude names the level in one line of every reply, e.g. `Effort: low (bookkeeping)`. You override it with `/effort`.
+- When unsure, Claude keeps the default. `max` only when you ask for it.
+- Subagents for searching or exploring run at `effort: low`.
+
+| Level | Fits |
+| --- | --- |
+| low | bookkeeping, notes, lookups, reading or listing files, running a known command |
+| medium | changes of a known shape: config edits, renames, version bumps, docs, a fix whose cause is clear |
+| high | new features, bugs with an unknown cause, multi-file changes, reviewing test feedback |
+| xhigh | architecture or design decisions, tricky performance or concurrency work, a second try after a failed fix |
+
+Turn the rules off with the `effortRules` setting; the skills stay available either way.
 
 ## Install
 
 At the prompt of a Claude Code terminal session:
 
 ```
-/plugin install account-statusline --marketplace AscalonV/account-statusline
+/plugin install toolkit --marketplace AscalonV/claude-toolkit
 ```
 
 Answer `y` to add the marketplace, then pick the user scope. No GitHub account or login is needed.
@@ -108,18 +134,22 @@ Answer `y` to add the marketplace, then pick the user scope. No GitHub account o
 From a shell:
 
 ```
-claude plugin install account-statusline --marketplace AscalonV/account-statusline
+claude plugin install toolkit --marketplace AscalonV/claude-toolkit
 ```
 
 With settings, for example:
 
 ```
-claude plugin install account-statusline --marketplace AscalonV/account-statusline --config fiveHourWrapUp=70 --config handoffFolder=docs/handoffs
+claude plugin install toolkit --marketplace AscalonV/claude-toolkit --config fiveHourWrapUp=70 --config handoffFolder=docs/handoffs
 ```
+
+### Upgrading from account-statusline
+
+This plugin used to be called `account-statusline`. Remove that one with `/plugin`, then install `toolkit` as above. The status line setting is updated on the first start; guard settings you changed need to be set again.
 
 ## Uninstall
 
-Remove the plugin with `/plugin`, then delete the `statusLine` entry from `~/.claude/settings.json` and the file `~/.claude/account-statusline.tsv`.
+Remove the plugin with `/plugin`, then delete the `statusLine` entry from `~/.claude/settings.json` and the file `~/.claude/toolkit.tsv`.
 
 ## Tests
 

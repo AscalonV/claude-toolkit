@@ -3,13 +3,14 @@
 // Plugins can't draw in the status line row, and Claude Code ignores a statusLine a plugin
 // answers through settings.read. So on first start this adds a `statusLine` command to
 // ~/.claude/settings.json (only where none is set), and keeps every running session's line in
-// one small file, `account-statusline.tsv`: session id, last write, line. The command picks
+// one small file, `toolkit.tsv`: session id, last write, line. The command picks
 // its session's row by the session_id Claude Code pipes to it.
 //
-// The same usage numbers drive the usage guard (guard.ts).
+// The same usage numbers drive the usage guard (guard.ts); effort.ts adds the effort rules.
 import type { EngineInterface, Register } from 'claude-code'
 
 import { readConfig } from './config'
+import { effortRules } from './effort'
 import { configDir, homeDir } from './paths'
 import { afterCompact, check, checkAll, setConfig, setUsage } from './guard'
 import type { Window } from './guard'
@@ -77,7 +78,9 @@ async function takeReading($: EngineInterface, next: Window[], isFresh: boolean)
 
 // One row per running session; a row not written for this long belongs to a session that ended.
 const STALE_MS = 12 * 60 * 60 * 1000
-const TABLE = 'account-statusline.tsv'
+const TABLE = 'toolkit.tsv'
+// Before the plugin was renamed from account-statusline; its statusLine is replaced.
+const OLD_TABLE = 'account-statusline.tsv'
 
 const draw = async ($: EngineInterface) => {
   const base = await configDir($)
@@ -104,7 +107,8 @@ const command = (file: string) =>
 
 // Adds the statusLine to the user's settings.json once, unless any settings already have one.
 async function install($: EngineInterface) {
-  if (await $.settings.read({ key: 'statusLine' })) return
+  const current = (await $.settings.read({ key: 'statusLine' })) as { command?: unknown } | undefined
+  if (current && !String(current.command ?? '').includes(OLD_TABLE)) return
   const base = await configDir($)
   if (!base) return
   const path = `${base}/settings.json`
@@ -122,7 +126,6 @@ async function install($: EngineInterface) {
 let loading: Promise<void> | undefined
 const load = ($: EngineInterface) =>
   (loading ??= (async () => {
-    $.ui.status(undefined) // clear the yellow notice an earlier version pinned
     const acct = await readAccount($)
     name = acct.name
     accountId = acct.id
@@ -142,7 +145,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await load($)
     if (bad.length) {
-      const text = `account-statusline: invalid setting ${bad.join(', ')}; using the default.`
+      const text = `${$.plugin.name}: invalid setting ${bad.join(', ')}; using the default.`
       await $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } }).catch(() => $.ui.toast(text))
     }
     return next(e)
@@ -164,6 +167,13 @@ export const register: Register = (on, options) => {
     await draw($)
     await checkAll($)
     return next(e)
+  })
+
+  on('prompt.compose', async ($, e, next) => {
+    const result = await next(e)
+    if (!config.effortRules) return result
+    const effort = { id: `${$.plugin.name}:effort`, text: await effortRules($), scope: 'session' as const }
+    return { sections: [...result.sections, effort] }
   })
 
   on('session.compact', async ($, e, next) => {

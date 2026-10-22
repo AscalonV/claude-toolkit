@@ -1,8 +1,14 @@
 {
-  "name": "account-statusline",
-  "version": "0.3.0",
-  "description": "Status line (account | effort | context | 5h and weekly usage) plus a usage guard that warns Claude before a limit is hit and starts a handoff file",
+  "name": "toolkit",
+  "version": "0.4.0",
+  "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, and per-turn effort skills",
   "userConfig": {
+    "effortRules": {
+      "type": "boolean",
+      "title": "Effort rules",
+      "description": "Tell Claude to pick its effort per turn with the effort skills and name it in every reply",
+      "default": true
+    },
     "guard": {
       "type": "boolean",
       "title": "Usage guard",
