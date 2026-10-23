@@ -27,12 +27,14 @@ let taskHandoff: string | undefined
 // draft belonged to the task before, so the next warning starts a new one.
 let fresh = false
 let mainTurn = false // the main chat started a turn (since the last load)
+let mainBusy = false // a main turn is running now; an idle main chat is woken by its notes
 const STATE = { plugin: 'toolkit', key: 'guard' } as const
 
 export const setConfig = (c: Config) => (config = c)
 export const setUsage = (w: Window[], name: string | undefined) => ((windows = w), (account = name))
 export const taskHandoffPath = () => taskHandoff
-export const mainTurnStarted = () => (mainTurn = true)
+export const mainTurnStarted = () => (mainTurn = mainBusy = true)
+export const mainTurnEnded = () => (mainBusy = false)
 
 async function save($: EngineInterface) {
   const sessionId = await $.session.id().catch(() => undefined)
@@ -70,7 +72,7 @@ export function resetGuard() {
   taskHandoff = undefined
   handoff = undefined
   fresh = false
-  mainTurn = false
+  mainTurn = mainBusy = false
 }
 
 function resets(iso: string | undefined) {
@@ -124,17 +126,20 @@ function note(stage: Stage, w: Window, isAgent: boolean, path: string | undefine
       : ''
   const body = isAgent
     ? stage === 'wrapUp'
-      ? 'Finish your current step and update your notes file, then carry on, but start no large new work.'
+      ? 'Finish your current step and update your notes file (write your report into it now, so nothing is lost if the limit is hit), then carry on carefully: only what the current step needs to be built, tested once and committed, in as few requests as you can; no optional work (extra or repeated test runs, screenshots, new features), short messages.'
       : 'Stop: start no new work. Leave the repo buildable, write your final notes, then end with a short summary.'
     : stage === 'wrapUp'
-      ? `Finish the current step, then fill in ${file} now.${draft} Tell running agents to update their notes files. Then carry on, but start no large new work.`
+      ? `Finish the current step, then fill in ${file} now.${draft} Tell running agents to update their notes files and to do only what their current step needs. Then carry on, but start no large new work.`
       : `Start no new work. Tell running agents to stop, leave the repo buildable and write final notes. Fold their notes into ${file}.${draft} Then tell the user in one line that the handoff is ready.`
   return [head, body, config.extraNote].filter(Boolean).join(' ')
 }
 
-async function send($: EngineInterface, text: string, agentId?: string) {
+// With `wake`, the main chat between turns (waiting for an agent, say) gets the note as a turn of its
+// own, so it acts at once instead of at the next message; otherwise it is read on the next request.
+async function send($: EngineInterface, text: string, agentId?: string, wake = false) {
   try {
-    await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] }, agentId })
+    if (wake && !agentId && !mainBusy) await $.prompt.submit({ text })
+    else await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] }, agentId })
   } catch {} // an agent that just ended takes no row
 }
 
@@ -153,7 +158,7 @@ export async function check($: EngineInterface, agentId?: string) {
     warned.add(key(stage))
     await save($)
     const path = agentId ? undefined : await ensureHandoff($)
-    await send($, note(stage, w, Boolean(agentId), path), agentId)
+    await send($, note(stage, w, Boolean(agentId), path), agentId, true)
   }
 }
 

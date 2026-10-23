@@ -36,7 +36,7 @@ import {
 } from './context'
 import { defaultLevel, effortRules } from './effort'
 import { configDir, homeDir } from './paths'
-import { afterCompact, atStop, check, checkAll, mainTurnStarted, resetGuard, restoreGuard, setConfig, setUsage } from './guard'
+import { afterCompact, atStop, check, checkAll, mainTurnEnded, mainTurnStarted, resetGuard, restoreGuard, setConfig, setUsage } from './guard'
 import type { Window } from './guard'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -238,7 +238,10 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (!e.agentId) turnEnded()
+    if (!e.agentId) {
+      turnEnded()
+      mainTurnEnded()
+    }
     if (!e.agentId && e.isAborted) await turnAborted($)
     if (!e.agentId && !e.isAborted) await afterTurn($, !atStop())
     return result

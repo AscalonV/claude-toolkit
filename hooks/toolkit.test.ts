@@ -294,6 +294,23 @@ const start = async ($: any, budget: number) => {
   await $.tool.call({ tool: budgetTool, tokens: budget, reason: 'test' } as never)
 }
 
+test('an idle main chat is woken by its guard note; during a turn it is appended', async ($, on) => {
+  const { session, submitted } = budgetWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' } as never)
+  await turnEnd($) // main waits for its agent now
+  await $.session.measure(measure(86) as never)
+  expect(submitted.filter(t => /^Usage guard: 5-hour limit at 86% \(wrap-up at 85%/.test(t)).length).toBe(1)
+  const rows = texts(session.appended())
+  expect(rows.some(t => t.startsWith('main: Usage guard'))).toBe(false)
+  expect(rows.find(t => t.startsWith('agent-1:'))).toMatch(/carry on carefully: only what the current step needs/)
+
+  await $.turn.start({ text: '', turnId: 't2' } as never) // the woken turn: no second note
+  await $.session.measure(measure(92) as never)
+  expect(submitted.filter(t => /Usage guard/.test(t)).length).toBe(1)
+  expect(texts(session.appended()).find(t => t.startsWith('main: Usage guard'))).toMatch(/stop at 90%/)
+})
+
 test('at 90 % Claude must decide; a compaction it asks for with carryOn resumes the task', async ($, on) => {
   const { session, submitted } = budgetWorld(on)
   await start($, 200000)
