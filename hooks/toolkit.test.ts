@@ -76,8 +76,13 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
   on('turn.step', async function* (_: unknown, e: { turnId: string; index: number }) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' } as never
   })
-  return mock.session(on)
+  const session = mock.session(on)
+  // The usage line at each turn start has its own tests; the others count the notes.
+  return { ...session, appended: () => session.appended().filter(r => !isUsageLine(r)), all: () => session.appended() }
 }
+
+const isUsageLine = (r: { message: { content: readonly { text?: unknown }[] } }) =>
+  String(r.message.content[0]?.text).startsWith('Usage now (toolkit)')
 
 const measure = (percentUsed: number, changed = ['rateLimits']) => ({
   context: { tokens: 1000, window: 200000 },
@@ -183,6 +188,40 @@ test('a project without git is found by its CLAUDE.md, from a subfolder', async 
   await $.turn.start({ text: '', turnId: 't0' } as never)
   await $.session.measure(measure(86) as never)
   expect(texts(session.appended())[0]).toMatch(/\/work\/notes\/handoffs\//)
+})
+
+test('each main turn starts with the usage line; agents get none', async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  const first = texts(session.all())
+  expect(first.length).toBe(1)
+  expect(first[0]).toMatch(/^main: Usage now \(toolkit\): Alex \| .*5h\/week not known yet$/)
+  await $.session.measure(measure(42) as never)
+  await $.turn.start({ text: '', turnId: 't1' } as never)
+  await $.turn.start({ text: '', turnId: 'a1', agentId: 'agent-1' } as never)
+  const rows = texts(session.all())
+  expect(rows.length).toBe(2)
+  expect(rows[1]).toMatch(/^main: Usage now \(toolkit\): Alex \| .*ctx 1k\/300k \| 5h 42% \(resets \d\d:40\)$/)
+})
+
+test('the usage rule joins the main prompt only; usageLine false turns line and rule off', { options: { usageLine: false } }, async ($, on) => {
+  const session = world(on)
+  on('prompt.compose', () => ({ sections: [] }))
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  expect(session.all().length).toBe(0)
+  const { sections } = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: ['Agent'], outputStyle: null, traits: [] })
+  expect(sections.some(s => s.id === 'toolkit:usage')).toBe(false)
+})
+
+test('the usage rule is in the main prompt by default', async ($, on) => {
+  world(on)
+  on('prompt.compose', () => ({ sections: [] }))
+  const main = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: ['Agent'], outputStyle: null, traits: [] })
+  expect(main.sections.find(s => s.id === 'toolkit:usage')?.text).toMatch(/never say you can't see the usage/)
+  const agent = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] })
+  expect(agent.sections.some(s => s.id === 'toolkit:usage')).toBe(false)
 })
 
 test('the effort rules join the system prompt, naming the plugin skills', async ($, on) => {

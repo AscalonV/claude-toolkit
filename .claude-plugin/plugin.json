@@ -1,6 +1,6 @@
 {
   "name": "toolkit",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "types": "./types/index.d.ts",
   "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents, optional automatic agent use and a per-task context budget",
   "userConfig": {
@@ -8,6 +8,12 @@
       "type": "boolean",
       "title": "Effort rules",
       "description": "Tell Claude to pick its effort per turn with the effort skills and name it in every reply",
+      "default": true
+    },
+    "usageLine": {
+      "type": "boolean",
+      "title": "Usage line for Claude",
+      "description": "Start each main turn with one line of the status line's numbers for Claude (account, effort, context, 5h and weekly usage)",
       "default": true
     },
     "guard": {

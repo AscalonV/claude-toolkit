@@ -28,6 +28,16 @@ Claude Code doesn't let plugins draw in the status line row, so on its first sta
 
 The first time, restart Claude Code once after installing so it picks up the new `statusLine` setting. With `CLAUDE_CONFIG_DIR` set, that folder is used instead of `~/.claude`.
 
+### Claude sees the numbers too
+
+The status line is only drawn for you. So Claude knows the numbers as well, each main turn starts with one line for it (not shown to you as a message), read at the last measurement:
+
+```
+Usage now (toolkit): Alex | high | ctx 95k/300k | 5h 42% (resets 15:30) | week 18% (resets Fri 09:00)
+```
+
+Claude's instructions say to use it when asked about limits and before starting agents for large work, and never to claim it can't see the usage. About 40 tokens a turn; `usageLine: false` turns it off.
+
 After `/login` to another account, usage numbers are hidden until the new account's first fresh reading, so the old account's numbers never show or trigger the guard.
 
 ## Usage guard
@@ -93,6 +103,7 @@ Created by the usage guard; the lines below are a snapshot from that moment.
 | Option | Default | What it does |
 | --- | --- | --- |
 | `effortRules` | `true` | Adds the effort rules to Claude's instructions |
+| `usageLine` | `true` | Starts each main turn with the status line's numbers for Claude |
 | `guard` | `true` | Turns the guard on or off |
 | `agentNotes` | `true` | Sends subagents their own notes |
 | `handoffFile` | `true` | Creates the handoff file |

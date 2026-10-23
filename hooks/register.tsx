@@ -6,7 +6,8 @@
 // one small file, `toolkit.tsv`: session id, last write, line. The command picks
 // its session's row by the session_id Claude Code pipes to it.
 //
-// The same usage numbers drive the usage guard (guard.ts); effort.ts adds the effort rules,
+// The same usage numbers drive the usage guard (guard.ts) and open each main turn as one line for
+// Claude (usageLine); effort.ts adds the effort rules,
 // agents.ts the project's rules for subagents and the optional rule to start agents unasked,
 // context.ts the per-task context budget.
 import type { EngineInterface, Register } from 'claude-code'
@@ -99,6 +100,15 @@ async function takeReading($: EngineInterface, next: Window[], isFresh: boolean)
   limits = held ? [] : next.filter(l => !l.resetsAt || Date.parse(l.resetsAt) > now)
   setUsage(limits, name)
 }
+
+// The status line's numbers as one line for Claude at the start of each main turn, so it never
+// has to look them up (or thinks it can't). Read at the last measurement, after the previous request.
+const usageNote = () => `Usage now (toolkit): ${line()}${limits.length ? '' : ' | 5h/week not known yet'}`
+
+const usageRules = () =>
+  "Each main turn starts with a `Usage now (toolkit)` line: the account, effort, context and the 5-hour and weekly " +
+  "usage with their reset times, the numbers the user's status line shows. Use it when asked about limits and before " +
+  "starting agents for large work; never say you can't see the usage."
 
 // One row per running session; a row not written for this long belongs to a session that ended.
 const STALE_MS = 12 * 60 * 60 * 1000
@@ -194,6 +204,10 @@ export const register: Register = (on, options) => {
     if (!e.agentId) {
       mainTurnStarted()
       await turnStarted($, e.text)
+      if (config.usageLine) {
+        const text = usageNote()
+        await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).catch(() => {})
+      }
       await check($)
     }
     return next(e)
@@ -273,6 +287,9 @@ export const register: Register = (on, options) => {
     // Only where the model can start agents: the main chat, not the agents themselves.
     if (config.agentUse && e.tools.includes('Agent')) {
       sections.push({ id: `${$.plugin.name}:agents`, text: agentUseRules(), scope: 'session' as const })
+    }
+    if (config.usageLine && e.tools.includes('Agent')) {
+      sections.push({ id: `${$.plugin.name}:usage`, text: usageRules(), scope: 'session' as const })
     }
     if (config.contextBudget && e.tools.includes('Agent')) {
       sections.push({ id: `${$.plugin.name}:context`, text: budgetRules(), scope: 'session' as const })

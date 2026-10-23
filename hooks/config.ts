@@ -5,6 +5,7 @@ export type Stage = 'wrapUp' | 'stop'
 
 export type Config = {
   effortRules: boolean
+  usageLine: boolean
   guard: boolean
   agentNotes: boolean
   handoffFile: boolean
@@ -20,6 +21,7 @@ export type Config = {
 
 export const DEFAULTS: Config = {
   effortRules: true,
+  usageLine: true,
   guard: true,
   agentNotes: true,
   handoffFile: true,
@@ -82,6 +84,7 @@ export function readConfig(options: PluginOptions): { config: Config; bad: strin
   return {
     config: {
       effortRules: flag(options.effortRules, DEFAULTS.effortRules, 'effortRules', bad),
+      usageLine: flag(options.usageLine, DEFAULTS.usageLine, 'usageLine', bad),
       guard: flag(options.guard, DEFAULTS.guard, 'guard', bad),
       agentNotes: flag(options.agentNotes, DEFAULTS.agentNotes, 'agentNotes', bad),
       handoffFile: flag(options.handoffFile, DEFAULTS.handoffFile, 'handoffFile', bad),
