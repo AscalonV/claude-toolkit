@@ -12,13 +12,13 @@ A Claude Code plugin with five parts:
 
 
 ```
-Alex | high | ctx 95k | 5h 42% (resets 15:30) | week 18% (resets Fri 09:00)
+Alex | high | ctx 95k | 5h 42% +0.7/min (resets 15:30) | week 18% (resets Fri 09:00)
 ```
 
 - **Account**: the display name of the logged-in claude.ai account (falls back to its email), read from that PC's own `~/.claude.json`, so each machine shows whoever is logged in there.
 - **Effort**: the current reasoning effort level.
 - **ctx**: tokens in the context window.
-- **5h / week**: subscription usage windows and when they reset, in local time.
+- **5h / week**: subscription usage windows and when they reset, in local time; `+0.7/min` while a window rises (percentage points a minute over the last ten minutes, shown once two minutes are seen).
 
 It shows at launch, before the first message, and needs no Python or other runtime.
 
@@ -49,11 +49,18 @@ The guard watches the same 5-hour and weekly numbers. Each limit has two stages:
 | 5-hour | 85 % | 90 % |
 | Weekly | 90 % | 97 % |
 
+### Fresh numbers
+
+Claude Code reads the usage only from its own API responses, so the numbers stand still while the session makes no requests (the main chat waiting, agents in a long build) and miss what other sessions on the same account use. So every 30 seconds while Claude or an agent works (every 5 minutes when idle) the plugin fetches the account's usage from Anthropic with the session's own login: Claude Code sets the credential header itself, the plugin never sees the token. Each reading updates the status line and is checked against the guard's stages at once; a note for an idle main chat wakes it as a turn of its own. Off with an API key or a third-party provider (no subscription limits there); `usagePoll` sets the period, `0` turns it off. A failed fetch waits twice as long each time, up to 10 minutes.
+
+### Stages
+
 When a stage is reached, the plugin adds a note to Claude's next request (context for Claude, not a popup). Each stage is sent once per limit window, session and agent, also across a plugin reload or update. The main chat gets its notes once it has started a turn, so a session opened and closed without a message gets no note and leaves no handoff file.
 
 - **Wrap-up:** finish the current step, fill in the handoff file, tell running agents to update their notes, then go on without starting large new work.
 - **Stop:** start no new work, tell agents to stop, leave the repo buildable and write final notes, fold the notes into the handoff file, then tell you in one line that the handoff is ready.
 - **Subagents** get their own shorter note in their own conversation.
+- **One agent toward the limit:** with two or more agents running, the stop stage alone comes too late: each agent winding down at the same time still uses up what is left. So the main chat is told to keep one agent going (the one closest to a result worth keeping, or the one holding a test turn) and to stop the others now, with the list of running agents. It comes at the wrap-up stage, or earlier when the stop is due within `narrowMinutes` (20) at the current rate, and again every 5 points while two or more agents still run. `narrowAgents: false` turns it off.
 - **After compaction** (the context budget's, `/compact` or Claude Code's own; not a summary Claude Code only prepares in advance), Claude is told to read this session's handoff file: the task's own file when Claude named one, else the session's draft. It never points to another session's file, which belongs to another task; with neither, Claude goes on from the compaction summary.
 
 ### Handoff file
@@ -106,6 +113,9 @@ Created by the usage guard; the lines below are a snapshot from that moment.
 | `usageLine` | `true` | Starts each main turn with the status line's numbers for Claude |
 | `guard` | `true` | Turns the guard on or off |
 | `agentNotes` | `true` | Sends subagents their own notes |
+| `narrowAgents` | `true` | With two or more agents running, tells Claude to keep one going toward the limit and stop the others |
+| `narrowMinutes` | `20` | How early that note comes: when the stop stage is due within this many minutes at the current rate (it comes at the wrap-up stage anyway) |
+| `usagePoll` | `30` | Fetch the account's usage this often, in seconds, while work runs (every 5 minutes when idle); `0` turns it off |
 | `handoffFile` | `true` | Creates the handoff file |
 | `agentRules` | `true` | Adds the project's `.claude/agent-rules.md` to every new subagent's prompt |
 | `agentUse` | `false` | Tells Claude to start subagents on its own when parallel work makes sense |

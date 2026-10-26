@@ -8,6 +8,9 @@ export type Config = {
   usageLine: boolean
   guard: boolean
   agentNotes: boolean
+  narrowAgents: boolean
+  narrowMinutes: number
+  usagePoll: number
   handoffFile: boolean
   agentRules: boolean
   agentUse: boolean
@@ -24,6 +27,9 @@ export const DEFAULTS: Config = {
   usageLine: true,
   guard: true,
   agentNotes: true,
+  narrowAgents: true,
+  narrowMinutes: 20,
+  usagePoll: 30,
   handoffFile: true,
   agentRules: true,
   agentUse: false,
@@ -63,6 +69,15 @@ const tokens = (v: unknown, fallback: number, key: string, bad: string[], isOff 
   return fallback
 }
 
+// Whole numbers from min to max, or 0 where `isOff` allows it.
+const count = (v: unknown, fallback: number, key: string, bad: string[], min: number, max: number, isOff = false) => {
+  if (v === undefined || v === '') return fallback
+  const n = typeof v === 'number' ? v : Number(v)
+  if ((isOff && n === 0) || (Number.isInteger(n) && n >= min && n <= max)) return n
+  bad.push(key)
+  return fallback
+}
+
 // Returns the settings and the names of the ones that fell back to their defaults.
 export function readConfig(options: PluginOptions): { config: Config; bad: string[] } {
   const bad: string[] = []
@@ -87,6 +102,9 @@ export function readConfig(options: PluginOptions): { config: Config; bad: strin
       usageLine: flag(options.usageLine, DEFAULTS.usageLine, 'usageLine', bad),
       guard: flag(options.guard, DEFAULTS.guard, 'guard', bad),
       agentNotes: flag(options.agentNotes, DEFAULTS.agentNotes, 'agentNotes', bad),
+      narrowAgents: flag(options.narrowAgents, DEFAULTS.narrowAgents, 'narrowAgents', bad),
+      narrowMinutes: count(options.narrowMinutes, DEFAULTS.narrowMinutes, 'narrowMinutes', bad, 1, 120),
+      usagePoll: count(options.usagePoll, DEFAULTS.usagePoll, 'usagePoll', bad, 10, 600, true),
       handoffFile: flag(options.handoffFile, DEFAULTS.handoffFile, 'handoffFile', bad),
       agentRules: flag(options.agentRules, DEFAULTS.agentRules, 'agentRules', bad),
       agentUse: flag(options.agentUse, DEFAULTS.agentUse, 'agentUse', bad),

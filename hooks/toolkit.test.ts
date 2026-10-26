@@ -13,6 +13,8 @@ let compactedWith: string | undefined // the instructions of the last compaction
 let refuseCompact = false // the next compaction is refused, as when a turn started first
 let vetoCompact = false // the next compactions are vetoed, as by a PreCompact hook
 let holdCompact: Promise<void> | undefined // a compaction waits for this, so a prompt can come meanwhile
+const AGENT_1 = { id: 'agent-1', description: 'build docs', type: 'general-purpose', status: 'running' }
+let agentsNow: object[] = [] // what agent.list answers
 // The engine hands paths over resolved for this OS (C:\home\t on Windows): compare them as /home/t.
 const norm = (p: string) => p.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
 
@@ -56,7 +58,8 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
     if (!git) return { value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: out[e.argv[1]] ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  on('agent.list', () => ({ value: [{ id: 'agent-1', description: 'build docs', type: 'general-purpose', status: 'running' }] }))
+  agentsNow = [AGENT_1]
+  on('agent.list', () => ({ value: agentsNow }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.measure', (_: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
   on('session.compact', async (_: unknown, e: { instructions?: string; trigger: string }) => {
@@ -957,4 +960,129 @@ test('the budget rules read sensibly with a cap below 500k', { options: { contex
   const text = (await compose($, ['Agent', budgetTool])).sections.find((s: { id: string }) => s.id === 'toolkit:context').text
   expect(text).toMatch(/  - 400k: complex work/)
   expect(text).not.toMatch(/500k-400k/)
+})
+
+// The account's usage endpoint, as the poll fetches it: `usageNow` answers, `fetches` counts.
+const pollWorld = (on: any) => {
+  const { session, submitted } = budgetWorld(on)
+  const usage = { now: 50, status: 200, fetches: 0, auth: 'bearer' as string | null }
+  on('session.authorize', () => ({ value: usage.auth ? { handle: 'h1', kind: usage.auth } : null }))
+  on('http.fetch', (_: unknown, e: { url: string; init?: { auth?: string } }) => {
+    usage.fetches++
+    expect(e.url).toBe('https://api.anthropic.com/api/oauth/usage')
+    expect(e.init?.auth).toBe('h1')
+    const text = JSON.stringify({ five_hour: { utilization: usage.now, resets_at: '2026-10-22T15:40:00.119842+00:00' }, seven_day: { utilization: 20, resets_at: '2026-10-25T13:00:00+00:00' } })
+    return { value: { status: usage.status, ok: usage.status === 200, headers: {}, text } }
+  })
+  return { session, submitted, usage }
+}
+const statusRow = () => String(files.get('/home/t/.claude/toolkit.tsv')).split('\n').find(r => r.startsWith(SID)) ?? ''
+const TWO = [AGENT_1, { id: 'agent-2', description: 'fix glass', type: 'general-purpose', status: 'running' }]
+
+test('the usage is fetched every 30 s while work runs, every 5 minutes when idle, and shows how fast it rises', async ($, on) => {
+  const { usage } = pollWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never) // the main chat works, agent-1 runs
+  await clock.advance(30_000)
+  expect(usage.fetches).toBe(1)
+  expect(statusRow()).toMatch(/5h 50% \(resets/)
+  expect(statusRow()).toMatch(/week 20%/)
+  usage.now = 53
+  await clock.advance(180_000) // 6 more fetches; 3 points in 3 minutes
+  expect(usage.fetches).toBe(7)
+  expect(statusRow()).toMatch(/5h 53% \+1\.0\/min/)
+
+  await turnEnd($)
+  agentsNow = [] // idle: the next fetch waits for 5 minutes after the last
+  await clock.advance(240_000)
+  expect(usage.fetches).toBe(7)
+  await clock.advance(90_000)
+  expect(usage.fetches).toBe(8)
+})
+
+test('a fresh reading wakes the idle main chat with its guard note, without any request of its own', async ($, on) => {
+  const { usage, submitted } = pollWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' } as never)
+  await turnEnd($) // main waits for agent-1, whose build makes no requests
+  usage.now = 86
+  await clock.advance(30_000)
+  expect(submitted.filter(t => /^Usage guard: 5-hour limit at 86% \(wrap-up at 85%/.test(t)).length).toBe(1)
+})
+
+test('with two agents running, main is told to keep one before the stop is due; once per 5 points', async ($, on) => {
+  const { usage, submitted } = pollWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' } as never)
+  await turnEnd($)
+  agentsNow = TWO
+  usage.now = 60
+  await clock.advance(30_000)
+  usage.now = 62
+  await clock.advance(120_000) // 1 %/min: the stop at 90 % is 28 min away
+  expect(submitted.some(t => /keep only|only one agent/.test(t))).toBe(false)
+  usage.now = 70
+  await clock.advance(60_000) // 10 points in 3.5 min: about 7 min to the stop
+  const notes = submitted.filter(t => /Let only one agent go on/.test(t))
+  expect(notes.length).toBe(1)
+  expect(notes[0]).toMatch(/^Usage guard: 5-hour limit at 70%, rising [\d.]+%\/min, with 2 agents running \(the stop at 90% in about \d+ min\)/)
+  expect(notes[0]).toMatch(/Running: build docs \(agent-1\); fix glass \(agent-2\)\./)
+  await clock.advance(30_000)
+  expect(submitted.filter(t => /Let only one agent go on/.test(t)).length).toBe(1)
+  usage.now = 75
+  await clock.advance(30_000)
+  expect(submitted.filter(t => /Let only one agent go on/.test(t)).length).toBe(2)
+
+  agentsNow = [AGENT_1] // main stopped the other one
+  usage.now = 80
+  await clock.advance(30_000)
+  expect(submitted.filter(t => /Let only one agent go on/.test(t)).length).toBe(2)
+})
+
+test('at the wrap-up stage two agents bring the note even when usage rises slowly', async ($, on) => {
+  const { usage, submitted } = pollWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' } as never)
+  await turnEnd($)
+  agentsNow = TWO
+  usage.now = 85
+  await clock.advance(30_000)
+  expect(submitted.filter(t => /Let only one agent go on/.test(t)).length).toBe(1)
+  expect(submitted.filter(t => /wrap-up at 85%/.test(t)).length).toBe(1)
+})
+
+test('narrowAgents off: no note to keep one agent', { options: { narrowAgents: false } }, async ($, on) => {
+  const { usage, submitted } = pollWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' } as never)
+  await turnEnd($)
+  agentsNow = TWO
+  usage.now = 86
+  await clock.advance(30_000)
+  expect(submitted.some(t => /Let only one agent go on/.test(t))).toBe(false)
+})
+
+test('a failed fetch backs off; usagePoll 0 or an API key fetches nothing', { options: { usagePoll: 0 } }, async ($, on) => {
+  const { usage } = pollWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  await clock.advance(600_000)
+  expect(usage.fetches).toBe(0)
+})
+
+test('an API key fetches nothing; a failed fetch waits longer each time', async ($, on) => {
+  const { usage } = pollWorld(on)
+  usage.status = 429
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  await clock.advance(30_000)
+  expect(usage.fetches).toBe(1)
+  await clock.advance(30_000) // waits 60 s
+  expect(usage.fetches).toBe(1)
+  await clock.advance(30_000)
+  expect(usage.fetches).toBe(2)
+  await clock.advance(90_000) // waits 120 s
+  expect(usage.fetches).toBe(2)
+  await clock.advance(30_000)
+  expect(usage.fetches).toBe(3)
 })

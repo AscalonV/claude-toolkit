@@ -3,7 +3,12 @@
 // chat gets its notes (and its draft handoff) once it has started a turn, so a session opened and
 // closed unused leaves no file. What was sent and the task's handoff are kept in $.state; a /clear
 // or a resume forgets the task's handoff and the draft, which belong to the conversation before.
-import type { EngineInterface } from 'claude-code'
+//
+// Each reading is also a sample of how fast a window rises. With two or more agents running, the
+// main chat is told early (at wrap-up, or when the stop is due within `narrowMinutes` at that rate)
+// to let only one agent go on toward the limit: several agents winding down at the stop stage
+// together still use up what is left.
+import type { AgentInfo, EngineInterface } from 'claude-code'
 
 import type { ToolkitGuard } from '../types'
 import { DEFAULTS } from './config'
@@ -31,7 +36,36 @@ let mainBusy = false // a main turn is running now; an idle main chat is woken b
 const STATE = { plugin: 'toolkit', key: 'guard' } as const
 
 export const setConfig = (c: Config) => (config = c)
-export const setUsage = (w: Window[], name: string | undefined) => ((windows = w), (account = name))
+// Samples of each window's percentage over the last RATE_SPAN, for the rate it rises at.
+type Sample = { t: number; percent: number }
+const samples = new Map<string, Sample[]>()
+const RATE_SPAN = 10 * 60 * 1000
+const MIN_SPAN = 2 * 60 * 1000
+const resetMinute = (w: Window) => (w.resetsAt ? Math.round(Date.parse(w.resetsAt) / 60000) : 0)
+
+export function setUsage(w: Window[], name: string | undefined, now?: number) {
+  windows = w
+  account = name
+  if (now === undefined) return
+  for (const x of w) {
+    const key = `${x.kind}@${resetMinute(x)}` // a new window starts a new series
+    const kept = (samples.get(key) ?? []).filter(s => now - s.t <= RATE_SPAN)
+    samples.set(key, [...kept, { t: now, percent: x.percentUsed }])
+    for (const k of samples.keys()) if (k.startsWith(`${x.kind}@`) && k !== key) samples.delete(k)
+  }
+}
+
+// Percentage points a minute over the last few minutes; undefined until two minutes are seen.
+export function rate(kind: string): number | undefined {
+  const s = [...samples.entries()].find(([k]) => k.startsWith(`${kind}@`))?.[1]
+  if (!s || s.length < 2) return undefined
+  const first = s[0]
+  const last = s[s.length - 1]
+  if (last.t - first.t < MIN_SPAN) return undefined
+  return Math.max(0, (last.percent - first.percent) / ((last.t - first.t) / 60000))
+}
+
+export const isMainBusy = () => mainBusy
 export const taskHandoffPath = () => taskHandoff
 export const mainTurnStarted = () => (mainTurn = mainBusy = true)
 export const mainTurnEnded = () => (mainBusy = false)
@@ -162,15 +196,55 @@ export async function check($: EngineInterface, agentId?: string) {
   }
 }
 
-// Main and every agent still running.
+export const isRunning = (a: AgentInfo) => ['pending', 'running', 'waiting'].includes(a.status)
+
+// Main and every agent still running; with two or more agents, maybe the note to keep only one.
 export async function checkAll($: EngineInterface) {
   await check($)
-  if (!config.agentNotes) return
+  let agents: AgentInfo[] = []
   try {
-    for (const a of await $.agent.list()) {
-      if (['pending', 'running', 'waiting'].includes(a.status)) await check($, a.id)
-    }
+    agents = (await $.agent.list()).filter(isRunning)
   } catch {}
+  if (config.agentNotes) for (const a of agents) await check($, a.id)
+  await narrow($, agents)
+}
+
+const fmtRate = (r: number) => (r >= 1 ? r.toFixed(1) : r.toFixed(2)).replace(/\.?0+$/, '')
+
+function narrowNote(w: Window, r: number | undefined, minutes: number, agents: AgentInfo[]) {
+  const t = config.thresholds[w.kind as keyof Config['thresholds']]
+  const rising = r ? `, rising ${fmtRate(r)}%/min` : ''
+  const due = Number.isFinite(minutes) ? ` (the stop at ${t.stop}% in about ${Math.max(1, Math.round(minutes))} min)` : ` (stop at ${t.stop}%)`
+  const list = agents.map(a => `${a.description || a.type} (${a.id})`).join('; ')
+  return [
+    `Usage guard: ${LABELS[w.kind]} limit at ${Math.round(w.percentUsed)}%${rising}, with ${agents.length} agents running${due}.`,
+    'Let only one agent go on toward the limit: keep the one closest to a result worth keeping (or the one holding a test turn), ' +
+      'and tell the others now to stop after their current edit, leave the repo buildable and write final notes. ' +
+      'Start no new agents; note in the handoff which agents stopped and where.',
+    `Running: ${list}.`,
+    config.extraNote,
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+// For the main chat: once per 5 points of a window while two or more agents still run, from the
+// wrap-up stage on, or earlier when the stop is due within narrowMinutes at the current rate.
+export async function narrow($: EngineInterface, agents: AgentInfo[]) {
+  if (!config.guard || !config.narrowAgents || !mainTurn || agents.length < 2) return
+  const session = await $.session.id()
+  for (const w of windows) {
+    const t = config.thresholds[w.kind as keyof Config['thresholds']]
+    if (!t || w.percentUsed >= t.stop) continue // the stop note stops them all
+    const r = rate(w.kind)
+    const minutes = r ? (t.stop - w.percentUsed) / r : Infinity
+    if (w.percentUsed < t.wrapUp && !(minutes <= config.narrowMinutes)) continue
+    const key = `${session}|main|${w.kind}|${w.resetsAt?.slice(0, 16)}|narrow${Math.floor(w.percentUsed / 5)}`
+    if (warned.has(key)) continue
+    warned.add(key)
+    await save($)
+    await send($, narrowNote(w, r, minutes, agents), undefined, true)
+  }
 }
 
 // The handoff this session knows: the task's own file, else its draft (also one from before a reload).

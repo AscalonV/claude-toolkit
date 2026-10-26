@@ -1,4 +1,4 @@
-// Status line: Alex | high | ctx 95k | 5h 42% (resets 15:30) | week 18% (resets Fri 09:00)
+// Status line: Alex | high | ctx 95k | 5h 42% +0.7/min (resets 15:30) | week 18% (resets Fri 09:00)
 //
 // Plugins can't draw in the status line row, and Claude Code ignores a statusLine a plugin
 // answers through settings.read. So on first start this adds a `statusLine` command to
@@ -7,7 +7,7 @@
 // its session's row by the session_id Claude Code pipes to it.
 //
 // The same usage numbers drive the usage guard (guard.ts) and open each main turn as one line for
-// Claude (usageLine); effort.ts adds the effort rules,
+// Claude (usageLine); poll.ts refreshes them between requests; effort.ts adds the effort rules,
 // agents.ts the project's rules for subagents and the optional rule to start agents unasked,
 // context.ts the per-task context budget.
 import type { EngineInterface, Register } from 'claude-code'
@@ -37,8 +37,23 @@ import {
 } from './context'
 import { defaultLevel, effortRules } from './effort'
 import { configDir, homeDir } from './paths'
-import { afterCompact, atStop, check, checkAll, mainTurnEnded, mainTurnStarted, resetGuard, restoreGuard, setConfig, setUsage } from './guard'
+import {
+  afterCompact,
+  atStop,
+  check,
+  checkAll,
+  isMainBusy,
+  isRunning,
+  mainTurnEnded,
+  mainTurnStarted,
+  rate,
+  resetGuard,
+  restoreGuard,
+  setConfig,
+  setUsage,
+} from './guard'
 import type { Window } from './guard'
+import { startPoll } from './poll'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -67,7 +82,9 @@ function line() {
   if (ctx) parts.push(`ctx ${Math.floor(ctx / 1000)}k${currentBudget() ? `/${Math.round(currentBudget() / 1000)}k` : ''}`)
   for (const [kind, label, withDay] of [['five_hour', '5h', false], ['seven_day', 'week', true]] as const) {
     const w = limits.find(l => l.kind === kind)
-    if (w) parts.push(`${label} ${Math.round(w.percentUsed)}%${resetText(w.resetsAt, withDay)}`)
+    const r = rate(kind)
+    const rising = r !== undefined && r >= 0.05 ? ` +${r.toFixed(1)}/min` : ''
+    if (w) parts.push(`${label} ${Math.round(w.percentUsed)}%${rising}${resetText(w.resetsAt, withDay)}`)
   }
   return parts.join(' | ')
 }
@@ -98,7 +115,7 @@ async function takeReading($: EngineInterface, next: Window[], isFresh: boolean)
   const now = await $.clock.now()
   // A window whose reset time has passed is stale too.
   limits = held ? [] : next.filter(l => !l.resetsAt || Date.parse(l.resetsAt) > now)
-  setUsage(limits, name)
+  setUsage(limits, name, now)
 }
 
 // The status line's numbers as one line for Claude at the start of each main turn, so it never
@@ -107,8 +124,8 @@ const usageNote = () => `Usage now (toolkit): ${line()}${limits.length ? '' : ' 
 
 const usageRules = () =>
   "Each main turn starts with a `Usage now (toolkit)` line: the account, effort, context and the 5-hour and weekly " +
-  "usage with their reset times, the numbers the user's status line shows. Use it when asked about limits and before " +
-  "starting agents for large work; never say you can't see the usage."
+  "usage with their reset times (and `+x/min` while a window rises), the numbers the user's status line shows. Use it " +
+  "when asked about limits and before starting agents for large work; never say you can't see the usage."
 
 // One row per running session; a row not written for this long belongs to a session that ended.
 const STALE_MS = 12 * 60 * 60 * 1000
@@ -191,6 +208,13 @@ export const register: Register = (on, options) => {
     await load($)
     if (config.contextBudget) await measureLimit($)
     if (config.contextBudget) await $.tool.register(toolSpec)
+    // Fresh numbers between requests: the status line, the guard notes and the rate they rise at.
+    const isBusy = async () => isMainBusy() || (await $.agent.list().catch(() => [])).some(isRunning)
+    startPoll($, config.usagePoll, isBusy, async w => {
+      await takeReading($, w, true)
+      await draw($)
+      await checkAll($)
+    })
     if (bad.length) {
       const text = `${$.plugin.name}: invalid setting ${bad.join(', ')}; using the default.`
       await $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } }).catch(() => $.ui.toast(text))

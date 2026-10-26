@@ -1,6 +1,6 @@
 {
   "name": "toolkit",
-  "version": "0.6.12",
+  "version": "0.7.0",
   "types": "./types/index.d.ts",
   "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents, optional automatic agent use and a per-task context budget",
   "userConfig": {
@@ -27,6 +27,28 @@
       "title": "Agent notes",
       "description": "Also send running subagents their own short notes",
       "default": true
+    },
+    "narrowAgents": {
+      "type": "boolean",
+      "title": "One agent toward the limit",
+      "description": "With two or more agents running, tell Claude from the wrap-up stage on (or earlier when usage rises fast) to keep one agent going and stop the others",
+      "default": true
+    },
+    "narrowMinutes": {
+      "type": "number",
+      "title": "Lead time for one agent (minutes)",
+      "description": "Tell Claude to keep only one agent once the stop stage is due within this many minutes at the current rate",
+      "default": 20,
+      "min": 1,
+      "max": 120
+    },
+    "usagePoll": {
+      "type": "number",
+      "title": "Usage refresh (seconds)",
+      "description": "Fetch the account's usage this often while Claude or an agent works (every 5 minutes when idle), so the status line and the guard also see other sessions and quiet stretches; 0 turns it off",
+      "default": 30,
+      "min": 0,
+      "max": 600
     },
     "handoffFile": {
       "type": "boolean",
