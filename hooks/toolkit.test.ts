@@ -79,13 +79,8 @@ function world(on: any, { git = true, cwd = '/proj', statusLine = { type: 'comma
   on('turn.step', async function* (_: unknown, e: { turnId: string; index: number }) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' } as never
   })
-  const session = mock.session(on)
-  // The usage line at each turn start has its own tests; the others count the notes.
-  return { ...session, appended: () => session.appended().filter(r => !isUsageLine(r)), all: () => session.appended() }
+  return mock.session(on)
 }
-
-const isUsageLine = (r: { message: { content: readonly { text?: unknown }[] } }) =>
-  String(r.message.content[0]?.text).startsWith('Usage now (toolkit)')
 
 const measure = (percentUsed: number, changed = ['rateLimits']) => ({
   context: { tokens: 1000, window: 200000 },
@@ -193,27 +188,38 @@ test('a project without git is found by its CLAUDE.md, from a subfolder', async 
   expect(texts(session.appended())[0]).toMatch(/\/work\/notes\/handoffs\//)
 })
 
-test('each main turn starts with the usage line; agents get none', async ($, on) => {
+// The context each prompt reached the engine with.
+const contextWorld = (on: any) => {
   const session = world(on)
+  const contexts: (readonly string[])[] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push(e.context ?? []), { text: e.text }))
+  return { session, contexts }
+}
+
+test('a prompt that starts a turn carries the usage line in its context, never as a row', async ($, on) => {
+  const { session, contexts } = contextWorld(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  await $.turn.start({ text: '', turnId: 't0' } as never)
-  const first = texts(session.all())
-  expect(first.length).toBe(1)
-  expect(first[0]).toMatch(/^main: Usage now \(toolkit\): Alex \| .*5h\/week not known yet$/)
+  await $.prompt.submit({ text: 'hi', origin: { kind: 'composer' } } as never)
+  await $.turn.start({ text: 'hi', turnId: 't0' } as never)
+  expect(contexts[0].length).toBe(1)
+  expect(contexts[0][0]).toMatch(/^Usage now \(toolkit\): Alex \| .*5h\/week not known yet$/)
   await $.session.measure(measure(42) as never)
-  await $.turn.start({ text: '', turnId: 't1' } as never)
-  await $.turn.start({ text: '', turnId: 'a1', agentId: 'agent-1' } as never)
-  const rows = texts(session.all())
-  expect(rows.length).toBe(2)
-  expect(rows[1]).toMatch(/^main: Usage now \(toolkit\): Alex \| .*ctx 1k\/300k \| 5h 42% \(resets \d\d:40\)$/)
+  await $.prompt.submit({ text: 'more', origin: { kind: 'composer' }, turnId: 't0' } as never) // delivered into t0
+  await $.prompt.submit({ text: '<task-notification>done</task-notification>', origin: { kind: 'task-notification' } } as never)
+  await $.prompt.submit({ text: '/idea x', command: { name: 'idea', args: 'x' }, origin: { kind: 'composer' } } as never)
+  expect(contexts[1].length).toBe(0)
+  expect(contexts[2].length).toBe(1)
+  expect(contexts[2][0]).toMatch(/^Usage now \(toolkit\): Alex \| .*ctx 1k\/300k \| 5h 42% \(resets \d\d:40\)$/)
+  expect(contexts[3].length).toBe(0)
+  expect(session.appended().length).toBe(0)
 })
 
 test('the usage rule joins the main prompt only; usageLine false turns line and rule off', { options: { usageLine: false } }, async ($, on) => {
-  const session = world(on)
+  const { contexts } = contextWorld(on)
   on('prompt.compose', () => ({ sections: [] }))
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  await $.turn.start({ text: '', turnId: 't0' } as never)
-  expect(session.all().length).toBe(0)
+  await $.prompt.submit({ text: 'hi', origin: { kind: 'composer' } } as never)
+  expect(contexts[0].length).toBe(0)
   const { sections } = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: ['Agent'], outputStyle: null, traits: [] })
   expect(sections.some(s => s.id === 'toolkit:usage')).toBe(false)
 })

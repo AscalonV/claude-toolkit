@@ -30,7 +30,7 @@ The first time, restart Claude Code once after installing so it picks up the new
 
 ### Claude sees the numbers too
 
-The status line is only drawn for you. So Claude knows the numbers as well, each main turn starts with one line for it (not shown to you as a message), read at the last measurement:
+The status line is only drawn for you. So Claude knows the numbers as well, each prompt that starts a main turn carries one line for it (not shown to you), read at the last measurement. It rides inside that prompt, so earlier messages never change and the prompt cache holds:
 
 ```
 Usage now (toolkit): Alex | high | ctx 95k/300k | 5h 42% (resets 15:30) | week 18% (resets Fri 09:00)

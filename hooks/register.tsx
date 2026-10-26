@@ -228,10 +228,6 @@ export const register: Register = (on, options) => {
     if (!e.agentId) {
       mainTurnStarted()
       await turnStarted($, e.text)
-      if (config.usageLine) {
-        const text = usageNote()
-        await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).catch(() => {})
-      }
       await check($)
     }
     return next(e)
@@ -239,9 +235,14 @@ export const register: Register = (on, options) => {
 
   // A message of the user's while a compaction runs goes before the "continue" prompt; where the
   // prompt came from tells a turn the user started from a notification's.
+  // The usage line rides in the context of the prompt that starts a turn, so it is part of that
+  // message: as a row of its own (appended at turn.start) the next request saw the turn before
+  // changed, and every turn wrote the whole conversation to the prompt cache again.
   on('prompt.submit', async ($, e, next) => {
     promptSubmitted(e)
-    return next(duringCompaction(e))
+    const out = duringCompaction(e)
+    if (!config.usageLine || e.turnId || e.command || e.isMeta) return next(out)
+    return next({ ...out, context: [...(out.context ?? []), usageNote()] })
   })
 
   // turn.step streams, so its hook is an async generator that forwards the stream.
