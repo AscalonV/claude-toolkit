@@ -1,6 +1,6 @@
 # claude-toolkit
 
-<!-- fleet:project v4 db: from /fleet-project (this project keeps its work in the Claude Fleet project database); a newer block replaces it -->
+<!-- fleet:project v5 db: from /fleet-project (this project keeps its work in the Claude Fleet project database); a newer block replaces it -->
 ## Tasks, ideas, tests and handoffs: the project database (Claude Fleet)
 
 This project's tasks, ideas, questions, tests, builds, releases, decisions and handoffs are in the project database
@@ -39,9 +39,10 @@ This project's tasks, ideas, questions, tests, builds, releases, decisions and h
   `Task: none (<why>)`. The hook refuses a commit without it and records the hash on the tasks.
 - **Handoffs** (a task that takes more than one chat): `fleet handoff new --task <keys>` (stdin: title, `::goal` one
   short paragraph, `::body`); it prints its ref `fleet:<project>:<slug>`: name that to ContextBudget (handoff) and
-  give it to `/continue-task`. Read with `fleet handoff show <slug>`; keep title and goal true with
-  `fleet handoff set <slug>` (`::title`, `::goal`); the text with `fleet handoff write <slug> --rev <the rev you
-  read>`; `--task`/`--untask <key>` as tasks join or leave; `fleet handoff close <slug>` when done.
+  give it to `/continue-task`. Read with `fleet handoff show <slug>` (it prints the rev); keep title and goal true
+  with `fleet handoff set <slug> --rev <the rev you read>` (`::title`, `::goal`); the text with
+  `fleet handoff write <slug> --rev <the rev you read>`; `--task`/`--untask <key>` as tasks join or leave;
+  `fleet handoff close <slug>` when done.
 - **Agents** write only their notes: `fleet note --agent handoff <slug>`; every other fleet write is the main chat's.
 - **Memory** holds no task, question or test state (the database has it; a hook warns).
 - **Mistakes:** `fleet undo <#event>` (`fleet log` shows them); text that must go: `fleet redact <#note>`.
