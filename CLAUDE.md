@@ -1,6 +1,6 @@
 # claude-toolkit
 
-<!-- fleet:project v3 db: from /fleet-project (this project keeps its work in the Claude Fleet project database); a newer block replaces it -->
+<!-- fleet:project v4 db: from /fleet-project (this project keeps its work in the Claude Fleet project database); a newer block replaces it -->
 ## Tasks, ideas, tests and handoffs: the project database (Claude Fleet)
 
 This project's tasks, ideas, questions, tests, builds, releases, decisions and handoffs are in the project database
@@ -12,13 +12,16 @@ This project's tasks, ideas, questions, tests, builds, releases, decisions and h
   `fleet list --kind task --state active`, `fleet log`.
 - **Text only from stdin**, never as an argument: Bash `fleet note 12 <<'EOF'` … `EOF`; PowerShell
   `@'` … `'@ | fleet note 12` (the here-string's closing `'@` at the start of its line). The first lines are the main
-  text; a line `::<field>` starts a field: `::words` the user's own words, verbatim; `::why`, `::next`, `::note`,
-  `::goal`, `::a` `::b` … options or points. Text that looks like a secret is refused.
+  text; a line that is only `::<field>` starts a field, and its text goes on the lines below the mark (never on the
+  mark's line): `::words` the user's own words, verbatim; `::why`, `::next`, `::note`, `::goal`, `::a` `::b` …
+  options or points. E.g. `fleet task set 12 --state active <<'EOF'`, then `::next`, `profile the start`, `EOF`, each
+  on its own line. Text that looks like a secret is refused (`--force` when it is none).
 - **Tasks:** `fleet task new [--where <component>] [--from I-<n>]` (stdin: title, `::words`, `::next`). Now is
   computed (open questions → you, waiting checks → test, `next` → claude): keep `next` true with
-  `fleet task set <key> --state active` and `::next <what Claude does next>`; `--state paused|dropped` needs `::why`;
-  `done` when built; `released` comes only from `fleet release`. Findings and progress: `fleet note <key>`; the user's
-  words: `fleet note --user <key>`; plan steps: `fleet step <task>`, `fleet step done <key> [--commit <hash>]`.
+  `fleet task set <key> --state active` and `::next` (what Claude does next on the line below);
+  `--state paused|dropped` needs `::why`; `done` when built; `released` comes only from `fleet release`. Findings
+  and progress: `fleet note <key>`; the user's words: `fleet note --user <key>`; plan steps: `fleet step <task>`,
+  `fleet step done <key> [--commit <hash>]`.
 - **Questions:** every question for the user, in chat or on a page, is `fleet ask <task> [--label <the number you
   show>] [--rec a]` (stdin: the question, `::a` `::b` options). The answer: `fleet answer <question> [<option>]`
   (stdin: a summary, `::words` the user's words). A thing the user has to do: `fleet ask <task> --do`.
