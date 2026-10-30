@@ -67,6 +67,8 @@ When a stage is reached, the plugin adds a note to Claude's next request (contex
 
 **The task's own file wins.** When a task already has a handoff (written the project's way, or the one a new chat continues from), Claude names it with `ContextBudget` (`handoff: "<path>"`), and the guard notes and the compaction point to it instead of a draft. A new task in the same chat that has no handoff file of its own gets `handoff: "none"` with its budget: the previous task's file (and the session's earlier draft) is then no longer pointed to, and the next warning starts a new draft. Raising the budget during a task leaves the file as it is.
 
+**Claude Fleet's project database.** A handoff kept there is named `fleet:<project>:<slug>` (`fleet:<slug>` for a general one) instead of a path; the notes then tell Claude to read it with `fleet handoff show`. A project that keeps its work in that database (its folder has `.fleet/project.json` and the machine has `~/.fleet/fleet.db`) gets no draft file: the note tells Claude to bring the task's handoff there up to date, or to make one with `fleet handoff new`, and to name its ref.
+
 Otherwise, at the first warning in a session (once the main chat has started a turn), the plugin creates a draft `<YYYY-MM-DD>-<HHMM>-<session id, 8 chars>.md`. Where it goes depends on whether the session runs in a project:
 
 - **In a project:** `<project>/handoffs/`. The project is the git top level, or else the nearest folder up from the working directory that has a `CLAUDE.md` or `.claude/` folder. Your home folder doesn't count, even though it holds `~/.claude`.

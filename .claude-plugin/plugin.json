@@ -1,6 +1,6 @@
 {
   "name": "toolkit",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "types": "./types/index.d.ts",
   "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents, optional automatic agent use and a per-task context budget",
   "userConfig": {

@@ -15,6 +15,7 @@ import type { EngineInterface, PromptSubmitInput, Timer } from 'claude-code'
 
 import type { ToolkitContext } from '../types'
 import { afterCompact, atStop, clearTaskHandoff, setTaskHandoff, taskHandoffPath } from './guard'
+import { isFleetRef } from './handoff'
 
 export const TOOL = 'ContextBudget'
 const MIN = 100_000
@@ -118,7 +119,7 @@ export const toolSpec = {
       carryOn: { type: 'boolean', description: 'With compact: true when the task is not finished and needs no input from the user, so work resumes by itself after the compaction' },
       handoff: {
         type: 'string',
-        description: `The task's handoff file (absolute path), as soon as it has one: the usage guard and the compaction point to it. "none" only at the start of a new task that has no handoff file (the previous task's file is then no longer pointed to)`,
+        description: `The task's handoff file (absolute path; a handoff in the Claude Fleet project database: fleet:<project>:<slug>), as soon as it has one: the usage guard and the compaction point to it. "none" only at the start of a new task that has no handoff file (the previous task's file is then no longer pointed to)`,
       },
     },
     required: ['reason'],
@@ -135,7 +136,7 @@ export async function setFromTool($: EngineInterface, input: Record<string, unkn
   const path = isNone ? '' : given
   if (isNone) await clearTaskHandoff($)
   else if (path) await setTaskHandoff($, path)
-  const named = isNone ? ' This task has no handoff file; the previous one is no longer pointed to.' : path ? ` Handoff file: ${path}.` : ''
+  const named = isNone ? ' This task has no handoff file; the previous one is no longer pointed to.' : path ? ` ${isFleetRef(path) ? 'Handoff' : 'Handoff file'}: ${path}.` : ''
   if (input.compact === true) {
     pending = { carryOn: input.carryOn === true }
     await save($)
@@ -150,7 +151,7 @@ export async function setFromTool($: EngineInterface, input: Record<string, unkn
       result: `Compaction set for the end of this turn (context ${k(ctx)}), ${then}.${named}${none} End your turn now.`,
     }
   }
-  if (input.tokens === undefined && given) return { result: isNone ? named.trim() : `Handoff file set to ${path}.` }
+  if (input.tokens === undefined && given) return { result: isNone ? named.trim() : `${isFleetRef(path) ? 'Handoff' : 'Handoff file'} set to ${path}.` }
   const asked = Number(input.tokens)
   if (!Number.isFinite(asked)) return { deny: 'Give tokens (a new budget), compact: true or handoff.' }
   const top = input.userAsked === true ? Math.max(cap, window) : cap
@@ -199,7 +200,7 @@ export async function beforeRequest($: EngineInterface) {
 }
 
 const CONTINUE =
-  'Continue the task: the conversation was compacted, as you asked to stay within the context budget. Read the handoff file the note above names (if none is named, go on from the summary), set the context budget for the rest of the task, and carry on where you stopped.'
+  'Continue the task: the conversation was compacted, as you asked to stay within the context budget. Read the handoff file the note above names (a fleet: one with `fleet handoff show`; if none is named, go on from the summary), set the context budget for the rest of the task, and carry on where you stopped.'
 
 const MOVED = `Context budget: the compaction you asked for did not run, because a new turn (the user's message) started first. Answer the user. The plugin compacts at the end of this turn and then waits for the user. If the task should still resume by itself afterwards (the user's message doesn't change it), call ${TOOL} again with compact: true and carryOn: true; if the task needs the context, raise the budget instead.`
 

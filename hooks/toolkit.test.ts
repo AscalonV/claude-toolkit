@@ -522,6 +522,29 @@ test("the task's own handoff, named to ContextBudget, wins over a draft", async 
   expect(texts(session.appended()).pop()).toMatch(/Read the handoff file \/proj\/handoffs\/2026-10-22-task\.md/)
 })
 
+test('a handoff in the Claude Fleet project database: named as fleet:<project>:<slug>, read with fleet handoff show', async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  const answer = JSON.stringify(await $.tool.call({ tool: budgetTool, tokens: 300000, reason: 'task', handoff: 'fleet:demo:2026-10-30-login' } as never))
+  expect(answer).toMatch(/Handoff: fleet:demo:2026-10-30-login\./)
+  await $.session.measure(measure(86) as never)
+  expect(texts(session.appended())[0]).toMatch(/fill in the handoff fleet:demo:2026-10-30-login \(`fleet handoff show demo:2026-10-30-login`\) now\./)
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
+  expect(texts(session.appended()).pop()).toMatch(/Read the handoff fleet:demo:2026-10-30-login \(`fleet handoff show demo:2026-10-30-login`\)/)
+})
+
+test('a project in the Claude Fleet project database gets no draft file: the note says how to write its handoff there', async ($, on) => {
+  const session = world(on)
+  files.set('/proj/.fleet/project.json', '{"id":"x"}')
+  files.set('/home/t/.fleet/fleet.db', '')
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  await $.session.measure(measure(86) as never)
+  expect([...files.keys()].some(p => p.startsWith('/proj/handoffs/'))).toBe(false)
+  expect(texts(session.appended())[0]).toMatch(/fill in the task's handoff in the project database \(`fleet handoff show <slug>`.*\) now\. Name its ref \(fleet:<project>:<slug>/)
+})
+
 test('a draft is marked as one until Claude fills it in', async ($, on) => {
   const session = world(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })

@@ -41,6 +41,23 @@ export async function projectRoot($: EngineInterface) {
   return undefined
 }
 
+// A handoff in the Claude Fleet project database: fleet:<project key>:<slug> (General: fleet:<slug>), read with
+// `fleet handoff show`. Anything else is a file path.
+export const isFleetRef = (h: string) => h.startsWith('fleet:')
+export function handoffName(h: string) {
+  if (!isFleetRef(h)) return `the handoff file ${h}`
+  const rest = h.slice('fleet:'.length)
+  return `the handoff ${h} (\`fleet handoff show ${rest.includes(':') ? rest : `${rest} --general`}\`)`
+}
+
+// A project that keeps its work in the Claude Fleet project database: its folder has .fleet/project.json and this
+// machine has ~/.fleet/fleet.db. Its handoffs are in the database, so no draft file goes into its folder.
+export async function fleetProject($: EngineInterface, project: string | undefined) {
+  if (!project) return false
+  const home = await homeDir($)
+  return Boolean(home) && (await $.fs.exists(`${project}/.fleet/project.json`)) && (await $.fs.exists(`${home}/.fleet/fleet.db`))
+}
+
 // Where handoffs go: <project>/<folder> in a project, else the outside folder, relative to the
 // Claude config folder (~/.claude/handoffs by default). An absolute path stands as given.
 export async function handoffDir($: EngineInterface, folder: string, outside: string) {

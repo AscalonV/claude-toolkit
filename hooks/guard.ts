@@ -13,7 +13,7 @@ import type { AgentInfo, EngineInterface } from 'claude-code'
 import type { ToolkitGuard } from '../types'
 import { DEFAULTS } from './config'
 import type { Config, Stage } from './config'
-import { createHandoff, handoffDir, newestHandoff } from './handoff'
+import { createHandoff, fleetProject, handoffDir, handoffName, newestHandoff } from './handoff'
 import type { Usage } from './handoff'
 
 export type Window = { kind: string; percentUsed: number; resetsAt?: string }
@@ -31,6 +31,8 @@ let taskHandoff: string | undefined
 // Claude said the current task has no handoff file (ContextBudget handoff "none"): the session's earlier
 // draft belonged to the task before, so the next warning starts a new one.
 let fresh = false
+// The session's project keeps its work in the Claude Fleet project database: no draft file, the note says how.
+let inFleetDb = false
 let mainTurn = false // the main chat started a turn (since the last load)
 let mainBusy = false // a main turn is running now; an idle main chat is woken by its notes
 const STATE = { plugin: 'toolkit', key: 'guard' } as const
@@ -133,6 +135,7 @@ async function makeHandoff($: EngineInterface) {
   if (!config.handoffFile) return undefined
   try {
     const { dir, project } = await handoffDir($, config.handoffFolder, config.outsideProjectFolder)
+    if ((inFleetDb = await fleetProject($, project))) return undefined
     const sessionId = await $.session.id()
     const own = fresh ? undefined : await newestHandoff($, dir, sessionId)
     if (own) return own
@@ -152,12 +155,18 @@ function note(stage: Stage, w: Window, isAgent: boolean, path: string | undefine
   const limit = config.thresholds[w.kind as keyof Config['thresholds']][stage]
   const r = resets(w.resetsAt)
   const head = `Usage guard: ${LABELS[w.kind]} limit at ${Math.round(w.percentUsed)}% (${stage === 'stop' ? 'stop' : 'wrap-up'} at ${limit}%${r ? `, ${r}` : ''}).`
-  const file = path ? `the handoff file ${path}` : 'a handoff note'
+  const file = path
+    ? handoffName(path)
+    : inFleetDb
+      ? "the task's handoff in the project database (`fleet handoff show <slug>`, then `fleet handoff write <slug> --rev <n>`; a task without one: `fleet handoff new`, stdin: title, ::goal, ::body)"
+      : 'a handoff note'
   // A plugin draft: Claude either fills it in (and marks it open) or uses the task's own file.
   const draft =
     path && path !== taskHandoff
       ? ` If the task already has its own handoff file, update that one instead, name it to ContextBudget (handoff) and delete ${path}; otherwise fill it in and set its Status to open.`
-      : ''
+      : !path && inFleetDb
+        ? ' Name its ref (fleet:<project>:<slug>, printed by fleet handoff new and show) to ContextBudget (handoff).'
+        : ''
   const body = isAgent
     ? stage === 'wrapUp'
       ? 'Finish your current step and update your notes file (write your report into it now, so nothing is lost if the limit is hit), then carry on carefully: only what the current step needs to be built, tested once and committed, in as few requests as you can; no optional work (extra or repeated test runs, screenshots, new features), short messages.'
@@ -263,7 +272,7 @@ export async function afterCompact($: EngineInterface) {
   if (!config.guard && !config.contextBudget) return
   const path = await knownHandoff($).catch(() => undefined)
   const who = config.guard ? 'Usage guard' : 'Context budget'
-  if (path) await send($, `${who}: the conversation was just compacted. Read the handoff file ${path} and carry on from there.`)
+  if (path) await send($, `${who}: the conversation was just compacted. Read ${handoffName(path)} and carry on from there.`)
 }
 
 // True once a limit reached its stop stage: nothing should then start work by itself.
