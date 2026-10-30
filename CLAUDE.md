@@ -18,7 +18,8 @@ This project's tasks, ideas, questions, tests, builds, releases, decisions and h
   on its own line. Text that looks like a secret is refused (`--force` when it is none).
 - **Tasks:** `fleet task new [--where <component>] [--from I-<n>]` (stdin: title, `::words`, `::next`). Now is
   computed (open questions → you, waiting checks → test, `next` → claude): keep `next` true with
-  `fleet task set <key> --state active` and `::next` (what Claude does next on the line below);
+  `fleet task set <key> --state active` and `::next` (what Claude does next on the line below); a task that only
+  waits for the user (an answer, a PC test) is `--state open`, else the board counts it as Claude's work;
   `--state paused|dropped` needs `::why`; `done` when built; `released` comes only from `fleet release`. Findings
   and progress: `fleet note <key>`; the user's words: `fleet note --user <key>`; plan steps: `fleet step <task>`,
   `fleet step done <key> [--commit <hash>]`.
