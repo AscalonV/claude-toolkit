@@ -42,7 +42,9 @@ This project's tasks, ideas, questions, tests, builds, releases, decisions and h
   give it to `/continue-task`. Read with `fleet handoff show <slug>` (it prints the rev); keep title and goal true
   with `fleet handoff set <slug> --rev <the rev you read>` (`::title`, `::goal`); the text with
   `fleet handoff write <slug> --rev <the rev you read>`; `--task`/`--untask <key>` as tasks join or leave;
-  `fleet handoff close <slug>` when done.
+  `fleet handoff close <slug>` when done. One open handoff per task: a chat on a task that has one
+  (`fleet handoff list`) carries that one on, never starts another; if a new one must replace it, copy the old one's
+  open points into the new one and close the old one (else the dashboard shows both). `handoff new` warns about this.
 - **Agents** write only their notes: `fleet note --agent handoff <slug>`; every other fleet write is the main chat's.
 - **Memory** holds no task, question or test state (the database has it; a hook warns).
 - **Mistakes:** `fleet undo <#event>` (`fleet log` shows them); text that must go: `fleet redact <#note>`.
