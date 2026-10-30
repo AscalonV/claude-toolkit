@@ -1,1 +1,5 @@
 out/
+
+# fleet views: generated from the project database (fleet board, fleet show)
+/BACKLOG.md
+/IDEAS.md
