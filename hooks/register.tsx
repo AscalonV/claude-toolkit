@@ -42,15 +42,18 @@ import {
   atStop,
   check,
   checkAll,
+  guardMode,
   isMainBusy,
   isRunning,
   mainTurnEnded,
   mainTurnStarted,
+  modeText,
   rate,
   resetGuard,
   restoreGuard,
   setConfig,
   setUsage,
+  spawnRefusal,
 } from './guard'
 import type { Window } from './guard'
 import { startPoll } from './poll'
@@ -86,6 +89,8 @@ function line() {
     const rising = r !== undefined && r >= 0.05 ? ` +${r.toFixed(1)}/min` : ''
     if (w) parts.push(`${label} ${Math.round(w.percentUsed)}%${rising}${resetText(w.resetsAt, withDay)}`)
   }
+  const mode = modeText()
+  if (mode) parts.push(mode)
   return parts.join(' | ')
 }
 
@@ -125,7 +130,9 @@ const usageNote = () => `Usage now (toolkit): ${line()}${limits.length ? '' : ' 
 const usageRules = () =>
   "Each main turn starts with a `Usage now (toolkit)` line: the account, effort, context and the 5-hour and weekly " +
   "usage with their reset times (and `+x/min` while a window rises), the numbers the user's status line shows. Use it " +
-  "when asked about limits and before starting agents for large work; never say you can't see the usage."
+  "when asked about limits and before starting agents for large work; never say you can't see the usage. Once the usage " +
+  "guard reaches a stage, the line ends with it: `guard: one agent` (a new agent is refused while another runs), " +
+  '`guard: careful` (work goes on in shorter turns, one agent at a time), `guard: stop` (no new work, the handoff is filled in).'
 
 // One row per running session; a row not written for this long belongs to a session that ended.
 const STALE_MS = 12 * 60 * 60 * 1000
@@ -296,8 +303,14 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // A new subagent gets the project's agent rules at the end of its prompt.
+  // From the usage guard's one-agent stage on, a new agent is refused while another still runs (at
+  // the stop stage always). A new subagent gets the project's agent rules at the end of its prompt.
   on('agent.spawn', async ($, e, next) => {
+    if (guardMode()) {
+      const running = (await $.agent.list().catch(() => [])).filter(a => isRunning(a) && a.id !== e.resume?.agentId)
+      const deny = spawnRefusal(running)
+      if (deny) return { deny }
+    }
     if (!config.agentRules || e.resume) return next(e)
     const rules = await agentRules($, e.cwd).catch(() => undefined)
     return next(rules ? { ...e, prompt: withRules(e.prompt, rules) } : e)

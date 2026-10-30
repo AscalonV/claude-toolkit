@@ -91,7 +91,7 @@ const measure = (percentUsed: number, changed = ['rateLimits']) => ({
 const texts = (rows: readonly { message: { content: readonly { text?: unknown }[] }; agentId?: string }[]) =>
   rows.map(r => `${r.agentId ?? 'main'}: ${String(r.message.content[0]?.text)}`)
 
-test('wrap-up, then stop, each once, for main and the running agent', async ($, on) => {
+test('careful, then stop, each once, for main and the running agent', async ($, on) => {
   const session = world(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
@@ -99,13 +99,13 @@ test('wrap-up, then stop, each once, for main and the running agent', async ($, 
   await $.session.measure(measure(50) as never)
   expect(session.appended().length).toBe(0)
 
-  await $.session.measure(measure(86) as never)
-  await $.session.measure(measure(87) as never)
+  await $.session.measure(measure(91) as never)
+  await $.session.measure(measure(92) as never)
   const wrap = texts(session.appended())
   expect(wrap.length).toBe(2)
-  expect(wrap[0]).toMatch(/^main: Usage guard: 5-hour limit at 86% \(wrap-up at 85%/)
+  expect(wrap[0]).toMatch(/^main: Usage guard: 5-hour limit at 91% \(careful mode at 90%/)
   expect(wrap[0]).toMatch(/\/proj\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12\.md/)
-  expect(wrap[1]).toMatch(/^agent-1: .*update your notes file/)
+  expect(wrap[1]).toMatch(/^agent-1: .*Careful mode: carry on.*Keep your notes file current/)
 
   const handoff = [...files.keys()].find(p => p.startsWith('/proj/handoffs/'))!
   expect(files.get(handoff)).toMatch(/Account: Alex/)
@@ -113,10 +113,10 @@ test('wrap-up, then stop, each once, for main and the running agent', async ($, 
   expect(files.get(handoff)).toMatch(/build docs/)
   expect(files.get(handoff)).toMatch(/## Open questions/)
 
-  await $.session.measure(measure(92) as never)
+  await $.session.measure(measure(96) as never)
   const all = texts(session.appended())
   expect(all.length).toBe(4)
-  expect(all[2]).toMatch(/^main: .*stop at 90%.*Start no new work/)
+  expect(all[2]).toMatch(/^main: .*stop at 95%.*Start no new work/)
   expect(all[3]).toMatch(/^agent-1: .*Stop: start no new work/)
   expect([...files.keys()].filter(p => p.startsWith('/proj/handoffs/')).length).toBe(1)
 })
@@ -131,26 +131,26 @@ test('after /login, the old account numbers are ignored until a fresh reading', 
   await $.session.measure(measure(86, ['context']) as never)
   expect(session.appended().length).toBe(0)
 
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(texts(session.appended())[0]).toMatch(/^main: Usage guard/)
 })
 
-test('a bad threshold falls back to the default with one notice', { options: { fiveHourWrapUp: 95, fiveHourStop: 90 } }, async ($, on) => {
+test('a bad threshold falls back to the default with one notice', { options: { fiveHourCareful: 96, fiveHourStop: 95 } }, async ($, on) => {
   const session = world(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
   const notices = session.appended().filter(r => r.message.type === 'system')
   expect(notices.length).toBe(1)
 
-  await $.session.measure(measure(86) as never)
-  expect(texts(session.appended()).some(t => /wrap-up at 85%/.test(t))).toBe(true)
+  await $.session.measure(measure(91) as never)
+  expect(texts(session.appended()).some(t => /careful mode at 90%/.test(t))).toBe(true)
 })
 
 test('after compaction, Claude is pointed at the handoff', async ($, on) => {
   const session = world(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
   expect(texts(session.appended()).pop()).toMatch(/^main: .*compacted\. Read the handoff file \/proj\/handoffs\/.*abcdef12\.md/)
 })
@@ -161,7 +161,7 @@ test("after a reload, the guard goes on with the session's own handoff, not a ne
   files.set('/proj/handoffs/2026-10-22-0930-99999999.md', '# Handoff of another session')
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(texts(session.appended())[0]).toMatch(/the handoff file \/proj\/handoffs\/2026-10-22-0900-abcdef12\.md/)
   expect([...files.keys()].filter(p => p.startsWith('/proj/handoffs/')).length).toBe(2)
   expect(files.get('/proj/handoffs/2026-10-22-0900-abcdef12.md')).toBe('# Handoff (before the reload)')
@@ -172,7 +172,7 @@ test('a broad task outside any project keeps its handoff in the config folder', 
   files.set('/home/t/.claude', '') // ~/.claude exists, but it doesn't make the home folder a project
   await $.session.start({ cwd: '/home/t', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(texts(session.appended())[0]).toMatch(/\/home\/t\/\.claude\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12\.md/)
   const handoff = [...files.keys()].find(p => p.startsWith('/home/t/.claude/handoffs/'))!
   expect(files.get(handoff)).toMatch(/Project: none \(task outside a project\)/)
@@ -184,7 +184,7 @@ test('a project without git is found by its CLAUDE.md, from a subfolder', async 
   files.set('/work/notes/CLAUDE.md', '# notes')
   await $.session.start({ cwd: '/work/notes/sub', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(texts(session.appended())[0]).toMatch(/\/work\/notes\/handoffs\//)
 })
 
@@ -347,16 +347,16 @@ test('an idle main chat is woken by its guard note; during a turn it is appended
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't1' } as never)
   await turnEnd($) // main waits for its agent now
-  await $.session.measure(measure(86) as never)
-  expect(submitted.filter(t => /^Usage guard: 5-hour limit at 86% \(wrap-up at 85%/.test(t)).length).toBe(1)
+  await $.session.measure(measure(91) as never)
+  expect(submitted.filter(t => /^Usage guard: 5-hour limit at 91% \(careful mode at 90%/.test(t)).length).toBe(1)
   const rows = texts(session.appended())
   expect(rows.some(t => t.startsWith('main: Usage guard'))).toBe(false)
-  expect(rows.find(t => t.startsWith('agent-1:'))).toMatch(/carry on carefully: only what the current step needs/)
+  expect(rows.find(t => t.startsWith('agent-1:'))).toMatch(/Careful mode: carry on with your task/)
 
   await $.turn.start({ text: '', turnId: 't2' } as never) // the woken turn: no second note
-  await $.session.measure(measure(92) as never)
+  await $.session.measure(measure(96) as never)
   expect(submitted.filter(t => /Usage guard/.test(t)).length).toBe(1)
-  expect(texts(session.appended()).find(t => t.startsWith('main: Usage guard'))).toMatch(/stop at 90%/)
+  expect(texts(session.appended()).find(t => t.startsWith('main: Usage guard'))).toMatch(/stop at 95%/)
 })
 
 test('at 90 % Claude must decide; a compaction it asks for with carryOn resumes the task', async ($, on) => {
@@ -515,8 +515,8 @@ test("the task's own handoff, named to ContextBudget, wins over a draft", async 
   await $.turn.start({ text: '', turnId: 't0' } as never)
   const answer = JSON.stringify(await $.tool.call({ tool: budgetTool, tokens: 300000, reason: 'task', handoff: '/proj/handoffs/2026-10-22-task.md' } as never))
   expect(answer).toMatch(/Handoff file: \/proj\/handoffs\/2026-10-22-task\.md/)
-  await $.session.measure(measure(86) as never)
-  expect(texts(session.appended())[0]).toMatch(/fill in the handoff file \/proj\/handoffs\/2026-10-22-task\.md now\. Tell/)
+  await $.session.measure(measure(91) as never)
+  expect(texts(session.appended())[0]).toMatch(/Keep the handoff file \/proj\/handoffs\/2026-10-22-task\.md current at the end of each step/)
   expect([...files.keys()].some(p => /\/proj\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12/.test(p))).toBe(false)
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
   expect(texts(session.appended()).pop()).toMatch(/Read the handoff file \/proj\/handoffs\/2026-10-22-task\.md/)
@@ -528,8 +528,8 @@ test('a handoff in the Claude Fleet project database: named as fleet:<project>:<
   await $.turn.start({ text: '', turnId: 't0' } as never)
   const answer = JSON.stringify(await $.tool.call({ tool: budgetTool, tokens: 300000, reason: 'task', handoff: 'fleet:demo:2026-10-30-login' } as never))
   expect(answer).toMatch(/Handoff: fleet:demo:2026-10-30-login\./)
-  await $.session.measure(measure(86) as never)
-  expect(texts(session.appended())[0]).toMatch(/fill in the handoff fleet:demo:2026-10-30-login \(`fleet handoff show demo:2026-10-30-login`\) now\./)
+  await $.session.measure(measure(91) as never)
+  expect(texts(session.appended())[0]).toMatch(/Keep the handoff fleet:demo:2026-10-30-login \(`fleet handoff show demo:2026-10-30-login`\) current at the end of each step/)
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
   expect(texts(session.appended()).pop()).toMatch(/Read the handoff fleet:demo:2026-10-30-login \(`fleet handoff show demo:2026-10-30-login`\)/)
 })
@@ -540,16 +540,16 @@ test('a project in the Claude Fleet project database gets no draft file: the not
   files.set('/home/t/.fleet/fleet.db', '')
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect([...files.keys()].some(p => p.startsWith('/proj/handoffs/'))).toBe(false)
-  expect(texts(session.appended())[0]).toMatch(/fill in the task's handoff in the project database \(`fleet handoff show <slug>`.*\) now\. Name its ref \(fleet:<project>:<slug>/)
+  expect(texts(session.appended())[0]).toMatch(/Keep the task's handoff in the project database \(`fleet handoff show <slug>`.*\) current at the end of each step, so the stop finds it ready\. Name its ref \(fleet:<project>:<slug>/)
 })
 
 test('a draft is marked as one until Claude fills it in', async ($, on) => {
   const session = world(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   const draft = [...files.keys()].find(p => p.startsWith('/proj/handoffs/'))!
   expect(files.get(draft)).toMatch(/^# Handoff .*\nUpdated: \d{4}-\d{2}-\d{2} \d{2}:\d{2} · Status: draft/)
   expect(texts(session.appended())[0]).toMatch(/update that one instead, name it to ContextBudget \(handoff\) and delete .*; otherwise fill it in and set its Status to open/)
@@ -562,7 +562,7 @@ test("a session's -2 handoff is newer than its first", async ($, on) => {
   files.set('/proj/handoffs/2026-10-22-0900-abcdef12-10.md', 'tenth')
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't0' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(texts(session.appended())[0]).toMatch(/abcdef12-10\.md/)
 })
 
@@ -618,11 +618,11 @@ test('a precompute is no compaction: no note, and the compaction Claude asked fo
 test('without a main turn yet, no guard note and no draft; the first turn brings both', async ($, on) => {
   const session = world(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(texts(session.appended()).filter(t => t.startsWith('main:')).length).toBe(0) // agents still get theirs
   expect([...files.keys()].some(p => p.startsWith('/proj/handoffs/'))).toBe(false)
   await turnStart($)
-  expect(texts(session.appended()).find(t => t.startsWith('main:'))).toMatch(/^main: Usage guard: 5-hour limit at 86% \(wrap-up at 85%, resets /)
+  expect(texts(session.appended()).find(t => t.startsWith('main:'))).toMatch(/^main: Usage guard: 5-hour limit at 91% \(careful mode at 90%, stop at 95%, resets /)
   expect([...files.keys()].some(p => p.startsWith('/proj/handoffs/'))).toBe(true)
 })
 
@@ -633,23 +633,23 @@ test('the budget, the request, the task handoff and the sent notes are written t
   await start($, 500000)
   await $.tool.call({ tool: budgetTool, reason: 'task', handoff: '/proj/handoffs/task.md' } as never)
   await $.tool.call({ tool: budgetTool, reason: 'done', compact: true, carryOn: true } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(saved.context).toEqual({ sessionId: SID, budget: 500000, isSet: true, step: 0, pending: { carryOn: true } })
   expect(saved.guard.sessionId).toBe(SID)
   expect(saved.guard.taskHandoff).toBe('/proj/handoffs/task.md')
-  expect(saved.guard.warned).toContain('abcdef12-3456-7890-abcd-ef1234567890|main|five_hour|2026-10-22T15:40|wrapUp')
+  expect(saved.guard.warned).toContain('abcdef12-3456-7890-abcd-ef1234567890|main|five_hour|2026-10-22T15:40|careful')
 })
 
 test('after a reload they are read back: no second note, and the compaction asked for still runs', async ($, on) => {
   const { session, submitted } = budgetWorld(on)
   const kept: Record<string, unknown> = {
     context: { budget: 500000, noted: true, pending: { carryOn: true } },
-    guard: { warned: ['abcdef12-3456-7890-abcd-ef1234567890|main|five_hour|2026-10-22T15:40|wrapUp'], taskHandoff: '/proj/handoffs/task.md' },
+    guard: { warned: ['abcdef12-3456-7890-abcd-ef1234567890|main|five_hour|2026-10-22T15:40|careful'], taskHandoff: '/proj/handoffs/task.md' },
   }
   on('state.get', (_: unknown, e: { key: string }) => ({ value: { value: kept[e.key], version: 1 } }))
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await turnStart($, 't1')
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   expect(texts(session.appended()).filter(t => t.startsWith('main:'))).toEqual([])
   ctxNow = 300000
   await turnEnd($)
@@ -818,7 +818,7 @@ test('a new task with handoff "none": the guard no longer names the previous tas
 
   const r = JSON.stringify(await $.tool.call({ tool: budgetTool, tokens: 200000, reason: 'new task: small fix', handoff: 'none' } as never))
   expect(r).toMatch(/no handoff file; the previous one is no longer pointed to/)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   const wrap = texts(session.appended()).filter(t => /^main: Usage guard: 5-hour/.test(t))
   expect(wrap[0]).not.toMatch(/task1\.md/)
   expect(wrap[0]).toMatch(/\/proj\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-abcdef12\.md/) // a new draft for the new task
@@ -827,7 +827,7 @@ test('a new task with handoff "none": the guard no longer names the previous tas
 test('handoff "none" also drops the session\'s earlier draft: a compaction then names no file', async ($, on) => {
   const { session } = budgetWorld(on)
   await start($, 200000)
-  await $.session.measure(measure(86) as never) // the first warning: a draft for task 1
+  await $.session.measure(measure(91) as never) // the first warning: a draft for task 1
   const draft = [...files.keys()].find(p => p.startsWith('/proj/handoffs/'))!
   expect(draft).toBeDefined()
   await $.tool.call({ tool: budgetTool, reason: 'new task', handoff: 'none' } as never)
@@ -839,7 +839,7 @@ test('handoff "none" also drops the session\'s earlier draft: a compaction then 
 test('at the stop stage, compact with carryOn says the user is waited for', async ($, on) => {
   const { submitted } = budgetWorld(on)
   await start($, 200000)
-  await $.session.measure(measure(92) as never)
+  await $.session.measure(measure(96) as never)
   ctxNow = 185000
   const r = JSON.stringify(await $.tool.call({ tool: budgetTool, reason: 'handoff done', compact: true, carryOn: true } as never))
   expect(r).toMatch(/usage guard is at its stop stage, so the task doesn't resume by itself/)
@@ -892,7 +892,7 @@ test('handoff "none", then a warning: a new draft for the new task (before a rel
   files.set('/proj/handoffs/2026-10-22-0900-abcdef12.md', '# the task before')
   await start($, 200000)
   await $.tool.call({ tool: budgetTool, reason: 'new task', handoff: 'none' } as never)
-  await $.session.measure(measure(86) as never)
+  await $.session.measure(measure(91) as never)
   beforeReload.files = [...files.keys()].filter(p => p.startsWith('/proj/handoffs/')).sort()
   expect(beforeReload.files.length).toBe(2)
 })
@@ -903,9 +903,9 @@ test('after a reload, the new task\'s draft goes on: no third file, and the comp
   on('state.get', (_: unknown, e: { key: string }) => ({ value: { value: beforeReload[e.key], version: 1 } }))
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't1' } as never)
-  await $.session.measure(measure(92) as never)
+  await $.session.measure(measure(96) as never)
   const draft = beforeReload.files.find((f: string) => !f.includes('-0900-'))
-  expect(texts(session.appended()).find(t => /^main: .*stop at 90%/.test(t))).toContain(draft)
+  expect(texts(session.appended()).find(t => /^main: .*stop at 95%/.test(t))).toContain(draft)
   expect([...files.keys()].filter(p => p.startsWith('/proj/handoffs/')).length).toBe(2)
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never)
   expect(texts(session.appended()).pop()).toContain(draft)
@@ -1034,9 +1034,9 @@ test('a fresh reading wakes the idle main chat with its guard note, without any 
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't1' } as never)
   await turnEnd($) // main waits for agent-1, whose build makes no requests
-  usage.now = 86
+  usage.now = 91
   await clock.advance(30_000)
-  expect(submitted.filter(t => /^Usage guard: 5-hour limit at 86% \(wrap-up at 85%/.test(t)).length).toBe(1)
+  expect(submitted.filter(t => /^Usage guard: 5-hour limit at 91% \(careful mode at 90%/.test(t)).length).toBe(1)
 })
 
 test('with two agents running, main is told to keep one before the stop is due; once per 5 points', async ($, on) => {
@@ -1048,13 +1048,13 @@ test('with two agents running, main is told to keep one before the stop is due; 
   usage.now = 60
   await clock.advance(30_000)
   usage.now = 62
-  await clock.advance(120_000) // 1 %/min: the stop at 90 % is 28 min away
+  await clock.advance(120_000) // 1 %/min: the stop at 95 % is 33 min away
   expect(submitted.some(t => /keep only|only one agent/.test(t))).toBe(false)
   usage.now = 70
   await clock.advance(60_000) // 10 points in 3.5 min: about 7 min to the stop
   const notes = submitted.filter(t => /Let only one agent go on/.test(t))
   expect(notes.length).toBe(1)
-  expect(notes[0]).toMatch(/^Usage guard: 5-hour limit at 70%, rising [\d.]+%\/min, with 2 agents running \(the stop at 90% in about \d+ min\)/)
+  expect(notes[0]).toMatch(/^Usage guard: 5-hour limit at 70%, rising [\d.]+%\/min, with 2 agents running \(the stop at 95% in about \d+ min\)/)
   expect(notes[0]).toMatch(/Running: build docs \(agent-1\); fix glass \(agent-2\)\./)
   await clock.advance(30_000)
   expect(submitted.filter(t => /Let only one agent go on/.test(t)).length).toBe(1)
@@ -1068,16 +1068,16 @@ test('with two agents running, main is told to keep one before the stop is due; 
   expect(submitted.filter(t => /Let only one agent go on/.test(t)).length).toBe(2)
 })
 
-test('at the wrap-up stage two agents bring the note even when usage rises slowly', async ($, on) => {
+test('at the one-agent stage two agents bring the note even when usage rises slowly', async ($, on) => {
   const { usage, submitted } = pollWorld(on)
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   await $.turn.start({ text: '', turnId: 't1' } as never)
   await turnEnd($)
   agentsNow = TWO
-  usage.now = 85
+  usage.now = 76
   await clock.advance(30_000)
   expect(submitted.filter(t => /Let only one agent go on/.test(t)).length).toBe(1)
-  expect(submitted.filter(t => /wrap-up at 85%/.test(t)).length).toBe(1)
+  expect(submitted.filter(t => /^Usage guard: 5-hour limit at 76% \(one agent at a time from 75%, careful mode at 90%/.test(t)).length).toBe(1)
 })
 
 test('narrowAgents off: no note to keep one agent', { options: { narrowAgents: false } }, async ($, on) => {
@@ -1114,4 +1114,95 @@ test('an API key fetches nothing; a failed fetch waits longer each time', async 
   expect(usage.fetches).toBe(2)
   await clock.advance(30_000)
   expect(usage.fetches).toBe(3)
+})
+
+test('the one-agent stage: a note for main only, no draft, and the status line names the mode', async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  await $.session.measure(measure(76) as never)
+  const notes = texts(session.appended())
+  expect(notes.length).toBe(1)
+  expect(notes[0]).toMatch(/^main: Usage guard: 5-hour limit at 76% \(one agent at a time from 75%, careful mode at 90%, resets .*\)\. Work on as usual, but with at most one agent at a time/)
+  expect([...files.keys()].some(p => p.startsWith('/proj/handoffs/'))).toBe(false)
+  expect(statusRow()).toMatch(/\| guard: one agent \(5h\)$/)
+
+  await $.session.measure(measure(91) as never)
+  expect(statusRow()).toMatch(/\| guard: careful \(5h\)$/)
+  expect([...files.keys()].some(p => p.startsWith('/proj/handoffs/'))).toBe(true) // careful mode brings the draft
+})
+
+test('from the one-agent stage on, a second agent is refused; at the stop stage every new one', async ($, on) => {
+  const prompts = spawnWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(70) as never)
+  expect((await $.agent.spawn({ prompt: 'A.', description: 'a' })).deny).toBeUndefined() // below the stage
+
+  await $.session.measure(measure(76) as never)
+  const r = await $.agent.spawn({ prompt: 'B.', description: 'b' })
+  expect(r.deny).toMatch(/^Usage guard: the 5-hour limit is at 76% \(one agent at a time from 75%\), and build docs \(agent-1\) still runs\. Do this work yourself/)
+  expect(prompts).toEqual(['A.'])
+
+  agentsNow = [] // the running one is done
+  expect((await $.agent.spawn({ prompt: 'C.', description: 'c' })).deny).toBeUndefined()
+
+  await $.session.measure(measure(96) as never)
+  expect((await $.agent.spawn({ prompt: 'D.', description: 'd' })).deny).toMatch(/\(stop stage\): start no new agents/)
+  expect(prompts).toEqual(['A.', 'C.'])
+})
+
+test('guard off: no agent is refused', { options: { guard: false } }, async ($, on) => {
+  spawnWorld(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.session.measure(measure(96) as never)
+  expect((await $.agent.spawn({ prompt: 'A.', description: 'a' })).deny).toBeUndefined()
+})
+
+test('in careful mode the stop comes early when, at the current rate, it is due within stopLead minutes', async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  await $.session.measure(measure(88) as never)
+  await clock.advance(120_000)
+  await $.session.measure(measure(91) as never) // 1.5 %/min: the stop at 95 % in under 3 min
+  const notes = texts(session.appended()).filter(t => t.startsWith('main: Usage guard'))
+  expect(notes.pop()).toMatch(/^main: Usage guard: 5-hour limit at 91% \(stop at 95%, due in about 3 min at \+1\.5%\/min, resets .*\)\. Start no new work/)
+})
+
+test('stopLead 0: careful mode goes on until the stop %', { options: { stopLead: 0 } }, async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  await $.session.measure(measure(88) as never)
+  await clock.advance(120_000)
+  await $.session.measure(measure(91) as never)
+  expect(texts(session.appended()).some(t => /stop at 95%, due in/.test(t))).toBe(false)
+  expect(texts(session.appended()).some(t => /^main: .*\(careful mode at 90%, stop at 95%/.test(t))).toBe(true)
+})
+
+test('the week: one agent and careful mode start together at 90, the stop is at 98', async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  const week = (percentUsed: number) =>
+    ({ context: { tokens: 1000, window: 200000 }, rateLimits: [{ kind: 'seven_day', percentUsed, resetsAt: '2026-10-25T13:00:00Z' }], changed: ['rateLimits'] }) as never
+  await $.session.measure(week(89))
+  expect(session.appended().length).toBe(0)
+  await $.session.measure(week(90))
+  const main = texts(session.appended()).filter(t => t.startsWith('main:'))
+  expect(main.length).toBe(1)
+  expect(main[0]).toMatch(/^main: Usage guard: weekly limit at 90% \(careful mode at 90%, stop at 98%/)
+  await $.session.measure(week(97))
+  expect(texts(session.appended()).some(t => /stop at 98%/.test(t) && /Start no new work/.test(t))).toBe(false)
+  await $.session.measure(week(98))
+  expect(texts(session.appended()).some(t => /^main: .*\(stop at 98%.*Start no new work/.test(t))).toBe(true)
+})
+
+test('old wrap-up settings are ignored; one-agent above careful falls back with a notice', { options: { fiveHourWrapUp: 60, fiveHourOneAgent: 92 } }, async ($, on) => {
+  const session = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't0' } as never)
+  expect(session.appended().filter(r => r.message.type === 'system').length).toBe(1)
+  await $.session.measure(measure(76) as never)
+  expect(texts(session.appended()).some(t => /one agent at a time from 75%/.test(t))).toBe(true)
 })

@@ -35,5 +35,5 @@ export const agentUseRules = () =>
     '- This replaces the default of starting agents only when the user asks: start subagents without being asked whenever parallel work makes sense, for example one agent codes while another researches, reviews or analyses logs, or one agent per repo for a batch of tasks. Small or tightly coupled work stays in the main chat.',
     "- Agents must not interfere: each owns the repo or files named in its prompt, and two agents never edit the same files. Bookkeeping (task lists, notes, the handoff) and the final summary to the user stay with the main chat.",
     "- An agent starts without this conversation's context: give it a self-contained prompt with the goal, the files it owns, what is already known and what to report back.",
-    '- Agents cost tokens (each re-reads what it needs), so skip them for quick one-off tasks. At the usage guard\'s wrap-up stage, start no agents for large new work.',
+    '- Agents cost tokens (each re-reads what it needs), so skip them for quick one-off tasks. From the usage guard\'s one-agent stage on, only one agent runs at a time (a second is refused).',
   ].join('\n')

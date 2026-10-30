@@ -1,7 +1,9 @@
 // The plugin's settings: the manifest's userConfig values, checked, with defaults.
 import type { PluginOptions } from 'claude-code'
 
-export type Stage = 'wrapUp' | 'stop'
+// The usage guard's stages, lowest first: one agent at a time, careful mode, stop.
+export type Stage = 'oneAgent' | 'careful' | 'stop'
+export const STAGES: Stage[] = ['oneAgent', 'careful', 'stop']
 
 export type Config = {
   effortRules: boolean
@@ -10,6 +12,7 @@ export type Config = {
   agentNotes: boolean
   narrowAgents: boolean
   narrowMinutes: number
+  stopLead: number
   usagePoll: number
   handoffFile: boolean
   agentRules: boolean
@@ -29,6 +32,7 @@ export const DEFAULTS: Config = {
   agentNotes: true,
   narrowAgents: true,
   narrowMinutes: 20,
+  stopLead: 5,
   usagePoll: 30,
   handoffFile: true,
   agentRules: true,
@@ -39,8 +43,8 @@ export const DEFAULTS: Config = {
   outsideProjectFolder: 'handoffs',
   extraNote: '',
   thresholds: {
-    five_hour: { wrapUp: 85, stop: 90 },
-    seven_day: { wrapUp: 90, stop: 97 },
+    five_hour: { oneAgent: 75, careful: 90, stop: 95 },
+    seven_day: { oneAgent: 90, careful: 90, stop: 98 },
   },
 }
 
@@ -82,12 +86,15 @@ const count = (v: unknown, fallback: number, key: string, bad: string[], min: nu
 export function readConfig(options: PluginOptions): { config: Config; bad: string[] } {
   const bad: string[] = []
   const t = DEFAULTS.thresholds
-  const pair = (kind: 'five_hour' | 'seven_day', prefix: string) => {
-    const wrapUp = percent(options[`${prefix}WrapUp`], t[kind].wrapUp, `${prefix}WrapUp`, bad)
-    const stop = percent(options[`${prefix}Stop`], t[kind].stop, `${prefix}Stop`, bad)
-    if (wrapUp < stop) return { wrapUp, stop }
-    bad.push(`${prefix}WrapUp/${prefix}Stop (wrap-up must be below stop)`)
-    return { ...t[kind] }
+  // One agent <= careful < stop: the one-agent stage may start with careful mode (the week's does).
+  const triple = (kind: 'five_hour' | 'seven_day', prefix: string) => {
+    const d = t[kind]
+    const oneAgent = percent(options[`${prefix}OneAgent`], d.oneAgent, `${prefix}OneAgent`, bad)
+    const careful = percent(options[`${prefix}Careful`], d.careful, `${prefix}Careful`, bad)
+    const stop = percent(options[`${prefix}Stop`], d.stop, `${prefix}Stop`, bad)
+    if (oneAgent <= careful && careful < stop) return { oneAgent, careful, stop }
+    bad.push(`${prefix}OneAgent/${prefix}Careful/${prefix}Stop (one agent must not be above careful, careful must be below stop)`)
+    return { ...d }
   }
   const folder = (key: 'handoffFolder' | 'outsideProjectFolder') => {
     const v = options[key]
@@ -104,6 +111,7 @@ export function readConfig(options: PluginOptions): { config: Config; bad: strin
       agentNotes: flag(options.agentNotes, DEFAULTS.agentNotes, 'agentNotes', bad),
       narrowAgents: flag(options.narrowAgents, DEFAULTS.narrowAgents, 'narrowAgents', bad),
       narrowMinutes: count(options.narrowMinutes, DEFAULTS.narrowMinutes, 'narrowMinutes', bad, 1, 120),
+      stopLead: count(options.stopLead, DEFAULTS.stopLead, 'stopLead', bad, 1, 60, true),
       usagePoll: count(options.usagePoll, DEFAULTS.usagePoll, 'usagePoll', bad, 10, 600, true),
       handoffFile: flag(options.handoffFile, DEFAULTS.handoffFile, 'handoffFile', bad),
       agentRules: flag(options.agentRules, DEFAULTS.agentRules, 'agentRules', bad),
@@ -113,7 +121,7 @@ export function readConfig(options: PluginOptions): { config: Config; bad: strin
       handoffFolder: folder('handoffFolder'),
       outsideProjectFolder: folder('outsideProjectFolder'),
       extraNote: typeof extra === 'string' ? extra.trim() : DEFAULTS.extraNote,
-      thresholds: { five_hour: pair('five_hour', 'fiveHour'), seven_day: pair('seven_day', 'weekly') },
+      thresholds: { five_hour: triple('five_hour', 'fiveHour'), seven_day: triple('seven_day', 'weekly') },
     },
     bad,
   }

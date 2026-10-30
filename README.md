@@ -3,7 +3,7 @@
 A Claude Code plugin with five parts:
 
 - a **status line** that shows who is signed in and how much usage is left,
-- a **usage guard** that warns Claude before a limit is hit and starts a handoff file,
+- a **usage guard** that narrows Claude's work before a limit is hit (one agent at a time, careful mode, stop) and starts a handoff file,
 - **effort skills** so Claude picks its thinking effort per turn,
 - **agents**: a project's own rules for its subagents, and an optional rule to start agents without being asked,
 - a **context budget** that Claude sets per task, so the conversation is compacted early on simple tasks and late on complex ones.
@@ -19,6 +19,7 @@ Alex | high | ctx 95k | 5h 42% +0.7/min (resets 15:30) | week 18% (resets Fri 09
 - **Effort**: the current reasoning effort level.
 - **ctx**: tokens in the context window.
 - **5h / week**: subscription usage windows and when they reset, in local time; `+0.7/min` while a window rises (percentage points a minute over the last ten minutes, shown once two minutes are seen).
+- **guard**: once the usage guard reaches a stage, the line ends with it and the window that brought it, e.g. `guard: careful (5h)`.
 
 It shows at launch, before the first message, and needs no Python or other runtime.
 
@@ -36,18 +37,20 @@ The status line is only drawn for you. So Claude knows the numbers as well, each
 Usage now (toolkit): Alex | high | ctx 95k/300k | 5h 42% (resets 15:30) | week 18% (resets Fri 09:00)
 ```
 
-Claude's instructions say to use it when asked about limits and before starting agents for large work, and never to claim it can't see the usage. About 40 tokens a turn; `usageLine: false` turns it off.
+Claude's instructions say to use it when asked about limits and before starting agents for large work, and never to claim it can't see the usage. The guard's stage at the end of the line keeps the mode in view on every turn, also after a compaction. About 40 tokens a turn; `usageLine: false` turns it off.
 
 After `/login` to another account, usage numbers are hidden until the new account's first fresh reading, so the old account's numbers never show or trigger the guard.
 
 ## Usage guard
 
-The guard watches the same 5-hour and weekly numbers. Each limit has two stages:
+The guard watches the same 5-hour and weekly numbers. Each limit has three stages:
 
-| Limit | Wrap-up | Stop |
-| --- | --- | --- |
-| 5-hour | 85 % | 90 % |
-| Weekly | 90 % | 97 % |
+| Limit | One agent | Careful | Stop |
+| --- | --- | --- | --- |
+| 5-hour | 75 % | 90 % | 95 % |
+| Weekly | 90 % | 90 % | 98 % |
+
+A stage may start with the one before it: the week's one-agent stage starts with careful mode.
 
 ### Fresh numbers
 
@@ -57,10 +60,12 @@ Claude Code reads the usage only from its own API responses, so the numbers stan
 
 When a stage is reached, the plugin adds a note to Claude's next request (context for Claude, not a popup). Each stage is sent once per limit window, session and agent, also across a plugin reload or update. The main chat gets its notes once it has started a turn, so a session opened and closed without a message gets no note and leaves no handoff file.
 
-- **Wrap-up:** finish the current step, fill in the handoff file, tell running agents to update their notes, then go on without starting large new work.
-- **Stop:** start no new work, tell agents to stop, leave the repo buildable and write final notes, fold the notes into the handoff file, then tell you in one line that the handoff is ready.
-- **Subagents** get their own shorter note in their own conversation.
-- **One agent toward the limit:** with two or more agents running, the stop stage alone comes too late: each agent winding down at the same time still uses up what is left. So the main chat is told to keep one agent going (the one closest to a result worth keeping, or the one holding a test turn) and to stop the others now, with the list of running agents. It comes at the wrap-up stage, or earlier when the stop is due within `narrowMinutes` (20) at the current rate, and again every 5 points while two or more agents still run. `narrowAgents: false` turns it off.
+- **One agent:** work goes on as usual, but with at most one agent at a time. The plugin **refuses** a new agent while another still runs (the Agent tool gets the reason: do the work yourself, or start it once the running one is done). No handoff file yet.
+- **Careful:** work goes on and gets finished, bigger tasks too; nothing is cancelled. Turns stay short (fewer, focused requests, short messages), still one agent at a time; tests and screenshots are fine. Claude keeps the handoff file current at the end of each step, so the stop finds it ready.
+- **Stop:** start no new work, tell agents to stop, leave the repo buildable and write final notes, fold the notes into the handoff file, then tell you in one line that the handoff is ready. New agents are refused, and nothing resumes by itself.
+- **Early stop:** a note is read only at the next request, and several agents (or other sessions on the account) can each still make some before they stop. So from careful mode on, the stop also comes when, at the rate the window rises, it is due within `stopLead` (5) minutes; the note says so (`stop at 95%, due in about 3 min at +1.5%/min`). `stopLead: 0` sends it only at the stop %.
+- **Subagents** get their own shorter careful and stop notes in their own conversation; starting agents is the main chat's, so they get no one-agent note.
+- **One agent toward the limit:** with two or more agents running (started before the one-agent stage), the stop stage alone comes too late: each agent winding down at the same time still uses up what is left. So the main chat is told to keep one agent going (the one closest to a result worth keeping, or the one holding a test turn) and to stop the others now, with the list of running agents. It comes at the one-agent stage, or earlier when the stop is due within `narrowMinutes` (20) at the current rate, and again every 5 points while two or more agents still run. `narrowAgents: false` turns it off.
 - **After compaction** (the context budget's, `/compact` or Claude Code's own; not a summary Claude Code only prepares in advance), Claude is told to read this session's handoff file: the task's own file when Claude named one, else the session's draft. It never points to another session's file, which belongs to another task; with neither, Claude goes on from the compaction summary.
 
 ### Handoff file
@@ -69,7 +74,7 @@ When a stage is reached, the plugin adds a note to Claude's next request (contex
 
 **Claude Fleet's project database.** A handoff kept there is named `fleet:<project>:<slug>` (`fleet:<slug>` for a general one) instead of a path; the notes then tell Claude to read it with `fleet handoff show`. A project that keeps its work in that database (its folder has `.fleet/project.json` and the machine has `~/.fleet/fleet.db`) gets no draft file: the note tells Claude to bring the task's handoff there up to date, or to make one with `fleet handoff new`, and to name its ref.
 
-Otherwise, at the first warning in a session (once the main chat has started a turn), the plugin creates a draft `<YYYY-MM-DD>-<HHMM>-<session id, 8 chars>.md`. Where it goes depends on whether the session runs in a project:
+Otherwise, at the first careful or stop note in a session (once the main chat has started a turn), the plugin creates a draft `<YYYY-MM-DD>-<HHMM>-<session id, 8 chars>.md`. Where it goes depends on whether the session runs in a project:
 
 - **In a project:** `<project>/handoffs/`. The project is the git top level, or else the nearest folder up from the working directory that has a `CLAUDE.md` or `.claude/` folder. Your home folder doesn't count, even though it holds `~/.claude`.
 - **Outside a project** (a broad task, for example started in your home folder): `~/.claude/handoffs/`, or `CLAUDE_CONFIG_DIR/handoffs/`.
@@ -113,18 +118,19 @@ Created by the usage guard; the lines below are a snapshot from that moment.
 | --- | --- | --- |
 | `effortRules` | `true` | Adds the effort rules to Claude's instructions |
 | `usageLine` | `true` | Starts each main turn with the status line's numbers for Claude |
-| `guard` | `true` | Turns the guard on or off |
+| `guard` | `true` | Turns the guard on or off (its notes, the agent refusal and the mode in the line) |
 | `agentNotes` | `true` | Sends subagents their own notes |
 | `narrowAgents` | `true` | With two or more agents running, tells Claude to keep one going toward the limit and stop the others |
-| `narrowMinutes` | `20` | How early that note comes: when the stop stage is due within this many minutes at the current rate (it comes at the wrap-up stage anyway) |
+| `narrowMinutes` | `20` | How early that note comes: when the stop stage is due within this many minutes at the current rate (it comes at the one-agent stage anyway) |
+| `stopLead` | `5` | From careful mode on, the stop comes early when at the current rate it is due within this many minutes; `0` only at the stop % |
 | `usagePoll` | `30` | Fetch the account's usage this often, in seconds, while work runs (every 5 minutes when idle); `0` turns it off |
 | `handoffFile` | `true` | Creates the handoff file |
 | `agentRules` | `true` | Adds the project's `.claude/agent-rules.md` to every new subagent's prompt |
 | `agentUse` | `false` | Tells Claude to start subagents on its own when parallel work makes sense |
 | `handoffFolder` | `handoffs` | Handoff folder in a project, relative to the project root, or absolute |
 | `outsideProjectFolder` | `handoffs` | Handoff folder outside a project, relative to the Claude config folder, or absolute |
-| `fiveHourWrapUp` / `fiveHourStop` | `85` / `90` | 5-hour thresholds in % |
-| `weeklyWrapUp` / `weeklyStop` | `90` / `97` | Weekly thresholds in % |
+| `fiveHourOneAgent` / `fiveHourCareful` / `fiveHourStop` | `75` / `90` / `95` | 5-hour thresholds in % |
+| `weeklyOneAgent` / `weeklyCareful` / `weeklyStop` | `90` / `90` / `98` | Weekly thresholds in % |
 | `extraNote` | empty | Text appended to every guard note |
 | `contextBudget` | `300000` | Budget until Claude sets one for the task; `0` turns the context budget off |
 | `contextCap` | `800000` | The largest budget Claude sets on its own; above it only when you ask |
@@ -132,10 +138,10 @@ Created by the usage guard; the lines below are a snapshot from that moment.
 Set them when installing (`--config key=value`, repeatable), later in `/plugin` (the plugin's configure screen), or from a shell:
 
 ```
-echo '{"fiveHourWrapUp":"70","handoffFolder":"docs/handoffs"}' | claude plugin configure toolkit@ascalonv --values-stdin
+echo '{"fiveHourOneAgent":"70","handoffFolder":"docs/handoffs"}' | claude plugin configure toolkit@ascalonv --values-stdin
 ```
 
-A value that isn't valid (not a number from 1 to 100, wrap-up not below stop, an empty folder) falls back to its default, and the session shows a one-line notice.
+A value that isn't valid (not a number from 1 to 100, one agent above careful, careful not below stop, an empty folder) falls back to its default, and the session shows a one-line notice. The settings of versions before 0.8 (`fiveHourWrapUp`, `weeklyWrapUp`) are ignored.
 
 ## Effort skills
 
@@ -221,7 +227,7 @@ claude plugin install toolkit --marketplace AscalonV/claude-toolkit
 With settings, for example:
 
 ```
-claude plugin install toolkit --marketplace AscalonV/claude-toolkit --config fiveHourWrapUp=70 --config handoffFolder=docs/handoffs
+claude plugin install toolkit --marketplace AscalonV/claude-toolkit --config fiveHourOneAgent=70 --config handoffFolder=docs/handoffs
 ```
 
 ### Upgrading from account-statusline

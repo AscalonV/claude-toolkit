@@ -1,8 +1,8 @@
 {
   "name": "toolkit",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "types": "./types/index.d.ts",
-  "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard that warns Claude before a limit is hit, per-turn effort skills, project rules for subagents, optional automatic agent use and a per-task context budget",
+  "description": "Status line (account | effort | context | 5h and weekly usage), a usage guard (one agent at a time, careful mode, stop) before a limit is hit, per-turn effort skills, project rules for subagents, optional automatic agent use and a per-task context budget",
   "userConfig": {
     "effortRules": {
       "type": "boolean",
@@ -19,7 +19,7 @@
     "guard": {
       "type": "boolean",
       "title": "Usage guard",
-      "description": "Warn Claude at the wrap-up and stop thresholds",
+      "description": "Warn Claude at the one-agent, careful and stop thresholds, and refuse a second agent from the one-agent stage on",
       "default": true
     },
     "agentNotes": {
@@ -31,7 +31,7 @@
     "narrowAgents": {
       "type": "boolean",
       "title": "One agent toward the limit",
-      "description": "With two or more agents running, tell Claude from the wrap-up stage on (or earlier when usage rises fast) to keep one agent going and stop the others",
+      "description": "With two or more agents running, tell Claude from the one-agent stage on (or earlier when usage rises fast) to keep one agent going and stop the others",
       "default": true
     },
     "narrowMinutes": {
@@ -53,7 +53,7 @@
     "handoffFile": {
       "type": "boolean",
       "title": "Handoff file",
-      "description": "Create a handoff file at the first warning in a session",
+      "description": "Create a handoff file at the first careful or stop note in a session",
       "default": true
     },
     "agentRules": {
@@ -96,11 +96,19 @@
       "description": "Where handoff files go for tasks outside a project, relative to the Claude config folder (or absolute)",
       "default": "handoffs"
     },
-    "fiveHourWrapUp": {
+    "fiveHourOneAgent": {
       "type": "number",
-      "title": "5-hour wrap-up %",
-      "description": "5-hour usage at which Claude wraps up",
-      "default": 85,
+      "title": "5-hour one-agent %",
+      "description": "5-hour usage from which only one agent runs at a time (a second is refused)",
+      "default": 75,
+      "min": 1,
+      "max": 100
+    },
+    "fiveHourCareful": {
+      "type": "number",
+      "title": "5-hour careful %",
+      "description": "5-hour usage from which Claude works on in shorter turns and keeps the handoff current",
+      "default": 90,
       "min": 1,
       "max": 100
     },
@@ -108,14 +116,22 @@
       "type": "number",
       "title": "5-hour stop %",
       "description": "5-hour usage at which Claude stops",
+      "default": 95,
+      "min": 1,
+      "max": 100
+    },
+    "weeklyOneAgent": {
+      "type": "number",
+      "title": "Weekly one-agent %",
+      "description": "Weekly usage from which only one agent runs at a time (a second is refused)",
       "default": 90,
       "min": 1,
       "max": 100
     },
-    "weeklyWrapUp": {
+    "weeklyCareful": {
       "type": "number",
-      "title": "Weekly wrap-up %",
-      "description": "Weekly usage at which Claude wraps up",
+      "title": "Weekly careful %",
+      "description": "Weekly usage from which Claude works on in shorter turns and keeps the handoff current",
       "default": 90,
       "min": 1,
       "max": 100
@@ -124,9 +140,17 @@
       "type": "number",
       "title": "Weekly stop %",
       "description": "Weekly usage at which Claude stops",
-      "default": 97,
+      "default": 98,
       "min": 1,
       "max": 100
+    },
+    "stopLead": {
+      "type": "number",
+      "title": "Early stop (minutes)",
+      "description": "From careful mode on, send the stop early when at the current rate it is due within this many minutes; 0 sends it only at the stop %",
+      "default": 5,
+      "min": 0,
+      "max": 60
     },
     "extraNote": {
       "type": "string",
