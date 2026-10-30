@@ -26,7 +26,8 @@ This project's tasks, ideas, questions, tests, builds, releases, decisions and h
   show>] [--rec a]` (stdin: the question, `::a` `::b` options). The answer: `fleet answer <question> [<option>]`
   (stdin: a summary, `::words` the user's words). A thing the user has to do: `fleet ask <task> --do`.
 - **Tests on the user's PC:** `fleet check new --task <key> [--build <component>@<version>]` (stdin: title, `::a`
-  `::b` … points); the result: `fleet check result <key> passed|failed|partial [--point b=failed]` (`::words`).
+  `::b` … points); a wrong point while it waits: `fleet check set <key>` (`::b` the new text; `--build` another
+  build it tests); the result: `fleet check result <key> passed|failed|partial [--point b=failed]` (`::words`).
 - **Ideas:** when the user says to note something for later: `fleet idea new [--area <component>]` (stdin: a short
   title, `::words` the user's words). Build nothing. When the user picks one: `fleet idea start I-<n>`.
 - **Builds and releases:** each build put into the outputs for a test: `fleet build <component> <version> --file
