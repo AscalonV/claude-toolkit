@@ -36,7 +36,7 @@ This project's tasks, ideas, questions, tests, builds, releases, decisions and h
   title, `::words` the user's words). Build nothing. When the user picks one: `fleet idea start I-<n>`.
 - **Builds and releases:** each build put into the outputs for a test: `fleet build <component> <version> --file
   <path> --carries <keys>`; a release: `fleet release <component> <version> [--includes …] [--carries …]` (stdin:
-  release notes); where it went: `fleet deploy <version> --to <target>`. Pages, files and branches of a task:
+  release notes); where it went: `fleet deploy <version> --to <target> [--on <day>]`. Pages, files and branches of a task:
   `fleet ref <key> --url|--file|--branch`. Decisions: `fleet decision new` (stdin: title, `::text`).
 - **The user's message:** a hook lists the tasks, questions and tests it names. Before the turn ends, each one gets
   its change in the database, or `fleet ack <ref>` (stdin: why nothing changes); otherwise the turn is held once.
